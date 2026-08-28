@@ -1,0 +1,6 @@
+# Morpheus needs no third-party Python packages: the Hungarian solver, the
+# Newick parser and every parser are implemented in the standard library so the
+# pipeline runs anywhere Python 3.9+ does.
+#
+# Nothing to install. This file exists so `pip install -r` is a no-op rather
+# than an error in scripted setups.

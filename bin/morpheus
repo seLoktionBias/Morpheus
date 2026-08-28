@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+###############################################################################
+# morpheus - single entry point for the whole pipeline, or any part of it.
+#
+#   morpheus run                     # every step in order
+#   morpheus run --from assign       # resume from a step
+#   morpheus run --only copy-number  # one step
+#   morpheus run --dry-run           # print the plan and stop
+#   morpheus step bat-search --help  # the Python CLI directly, for one step
+#   morpheus plot exon-models --gene MX1
+#   morpheus env                     # show what was resolved and exit
+#
+# The package works from a git checkout with no installation: this script finds
+# its own directory, so `bin/morpheus` and `/path/to/Morpheus/bin/morpheus`
+# behave identically.
+###############################################################################
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MORPHEUS_HOME="$(cd "${here}/.." && pwd)"
+export MORPHEUS_HOME
+
+usage() {
+    sed -n '3,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    cat <<'EOF'
+
+Commands:
+  run [options]        run the pipeline (see `morpheus run --help`)
+  step NAME [options]  run one step through the Python CLI
+  plot NAME [options]  run one figure script
+                         exon-models | transcript-status | scope-comparison | copy-number
+  env                  report the resolved environment and inputs
+  version              print the version
+  help                 this message
+EOF
+}
+
+# --------------------------------------------------------------------------
+# environment
+# --------------------------------------------------------------------------
+activate_environment() {
+    # Already inside it? Leave well alone; a site may have its own module.
+    if [[ "${CONDA_DEFAULT_ENV:-}" == "${MORPHEUS_ENV:-Morpheus}" ]]; then
+        return 0
+    fi
+    # A site module system (Apocrita: `ml miniforge`) may already have put the
+    # tools on PATH without a named conda env. Accept that.
+    if command -v hyphy >/dev/null 2>&1 && command -v mafft >/dev/null 2>&1 \
+       && command -v blastx >/dev/null 2>&1; then
+        return 0
+    fi
+
+    local env_name="${MORPHEUS_ENV:-Morpheus}"
+    local root="${MORPHEUS_CONDA_ROOT:-}"
+    if [[ -z "${root}" ]]; then
+        for candidate in "${CONDA_PREFIX_1:-}" "${CONDA_PREFIX:-}" \
+                         "${HOME}/miniforge3" "${HOME}/mambaforge" \
+                         "${HOME}/miniconda3" "${HOME}/anaconda3" \
+                         "${HOME}/Downloads/miniconda3" "/opt/miniconda3"; do
+            [[ -n "${candidate}" && -d "${candidate}/envs/${env_name}" ]] && { root="${candidate}"; break; }
+        done
+    fi
+    if [[ -n "${root}" && -d "${root}/envs/${env_name}" ]]; then
+        export PATH="${root}/envs/${env_name}/bin:${PATH}"
+        export CONDA_PREFIX="${root}/envs/${env_name}"
+        export CONDA_DEFAULT_ENV="${env_name}"
+        return 0
+    fi
+    return 1
+}
+
+python_bin() { command -v python3 || command -v python; }
+
+cmd_env() {
+    activate_environment || true
+    cat <<EOF
+Morpheus $(cat "${MORPHEUS_HOME}/VERSION" 2>/dev/null || echo "unknown")
+  home            ${MORPHEUS_HOME}
+  environment     ${CONDA_DEFAULT_ENV:-<none active>}
+  python          $(python_bin 2>/dev/null || echo MISSING)
+EOF
+    local missing=0
+    for exe in python3 blastx blastp makeblastdb mafft hyphy Rscript; do
+        if command -v "$exe" >/dev/null 2>&1; then
+            printf '  %-14s %s\n' "$exe" "$(command -v "$exe")"
+        else
+            printf '  %-14s MISSING\n' "$exe"; missing=1
+        fi
+    done
+    if command -v Rscript >/dev/null 2>&1; then
+        Rscript -e 'for (p in c("ape","ggplot2","paletteer")) cat(sprintf("  R:%-12s %s\n", p, requireNamespace(p, quietly=TRUE)))' 2>/dev/null
+    fi
+    [[ $missing -eq 0 ]] || echo "
+Some tools are missing. Run: bash install.sh"
+    return 0
+}
+
+# --------------------------------------------------------------------------
+# dispatch
+# --------------------------------------------------------------------------
+sub="${1:-help}"
+[[ $# -gt 0 ]] && shift || true
+
+case "${sub}" in
+    run)
+        activate_environment || true
+        exec bash "${MORPHEUS_HOME}/scripts/run_pipeline.sh" "$@"
+        ;;
+    step)
+        activate_environment || true
+        export PYTHONPATH="${MORPHEUS_HOME}${PYTHONPATH:+:${PYTHONPATH}}"
+        exec "$(python_bin)" -m morpheus "$@"
+        ;;
+    plot)
+        activate_environment || true
+        name="${1:?usage: morpheus plot NAME [options]}"; shift || true
+        case "${name}" in
+            exon-models|exon_models)          script=plot_exon_models.R ;;
+            transcript-status|status)         script=plot_transcript_status.R ;;
+            scope-comparison|scope)           script=plot_scope_comparison.R ;;
+            copy-number|copy_number|cnv)      script=plot_copy_number.R ;;
+            *) echo "unknown figure '${name}'" >&2; exit 2 ;;
+        esac
+        exec Rscript "${MORPHEUS_HOME}/R/${script}" "$@"
+        ;;
+    env)      cmd_env ;;
+    version)  cat "${MORPHEUS_HOME}/VERSION" ;;
+    help|-h|--help) usage ;;
+    *) echo "unknown command '${sub}'" >&2; usage >&2; exit 2 ;;
+esac

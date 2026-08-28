@@ -1,0 +1,21 @@
+name: Morpheus
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  - python=3.11
+  - pip
+  - git
+  # sequence search and alignment
+  - blast
+  - mafft
+  # selection analysis
+  - hyphy
+  # interval arithmetic used by the optional bedtools helpers
+  - bedtools
+  # figures
+  - r-base
+  - r-ape
+  - r-ggplot2
+  - r-paletteer

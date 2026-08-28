@@ -1,0 +1,13 @@
+# Analysis output belongs to a run, not to the package.
+results/
+logs/
+
+# Python
+__pycache__/
+*.pyc
+
+# Test scratch
+tests/tmp_smoke/
+
+# Editors / OS
+.DS_Store
