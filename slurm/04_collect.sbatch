@@ -21,8 +21,12 @@
 set -euo pipefail
 source "${MORPHEUS_HOME:?set MORPHEUS_HOME}/slurm/_common.sh"
 
+# Decide from how the run was submitted, not from whether a directory happens
+# to exist: a genes/ left behind by an earlier --per_gene yes run would
+# otherwise hijack a later --per_gene no run's collect step.
 GENES_ROOT="${WORKING_DIR}/genes"
-if [[ -d "${GENES_ROOT}" ]]; then
+if [[ "${MORPHEUS_PER_GENE:-yes}" == "yes" ]]; then
+    [[ -d "${GENES_ROOT}" ]] || { echo "expected per-gene results in ${GENES_ROOT}" >&2; exit 1; }
     morpheus_exec bash "${MORPHEUS_HOME}/scripts/merge_and_plot.sh" \
         "${GENES_ROOT}" "${WORKING_DIR}/combined"
 else

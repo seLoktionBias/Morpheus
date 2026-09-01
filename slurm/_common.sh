@@ -107,7 +107,11 @@ export MORPHEUS_ENV_RESOLVED=1
 # Carry --search and --skip_plot into every job, so one submitted chain runs the
 # same analysis end to end. A step the flags exclude is skipped by run_pipeline
 # itself, which keeps that decision in exactly one place.
-declare -a MORPHEUS_FLAGS=(--search "${MORPHEUS_SEARCH:-both}")
+# --per_gene no, always: whether to split by gene is decided once, at submit
+# time, by `morpheus run --mode slurm`. A job that re-decided for itself would
+# re-enter the per-gene branch and try to orchestrate the whole list from
+# inside a single task. The gene array passes its own --gene and --output.
+declare -a MORPHEUS_FLAGS=(--search "${MORPHEUS_SEARCH:-both}" --per_gene no)
 [[ "${MORPHEUS_SKIP_PLOT:-0}" == "1" ]] && MORPHEUS_FLAGS+=(--skip_plot)
 
 # Run anything inside the chosen environment.

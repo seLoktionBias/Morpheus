@@ -115,7 +115,7 @@ ml miniforge && bash install.sh
 ```
 
 `make help` lists the same operations as Makefile targets. `make test` runs the
-smoke test (60 checks: the optimal matcher against brute force, the codon table,
+smoke test (62 checks: the optimal matcher against brute force, the codon table,
 ORF reporting, Newick pruning, every CLI subcommand, flag rejection, `paths.txt`
 parsing, help/parser agreement, contiguous directory numbering, Slurm script consistency, all shell
 syntax, and every figure script against synthetic input).

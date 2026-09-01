@@ -351,7 +351,7 @@ should_run() {
     local step="$1"
     [[ "$step" == "plots"   && ${SKIP_PLOT} -eq 1 ]] && return 1
     [[ "$step" == "compare" && ${DO_COMPARE} -eq 0 ]] && return 1
-    if [[ ${#ONLY_STEPS[@]-0} -gt 0 ]]; then
+    if [[ ${#ONLY_STEPS[@]} -gt 0 ]]; then
         for s in "${ONLY_STEPS[@]}"; do [[ "$s" == "$step" ]] && return 0; done
         return 1
     fi
@@ -370,6 +370,24 @@ banner() {
     printf '\n%s\n== %-58s ==\n%s\n' \
         "==============================================================" "$1" \
         "=============================================================="
+}
+
+# Everything a submitted job needs to know, built in exactly one place. This
+# was two near-identical blocks, one per submit path, and they had already
+# drifted: --per_gene was propagated by neither, so every job defaulted back to
+# per_gene=yes and the reference job tried to orchestrate genes instead of
+# flattening the GTF.
+build_exports() {
+    local e="ALL,MORPHEUS_HOME=${MORPHEUS_HOME},MORPHEUS_PROJECT_DIR=${WORKING_DIR}"
+    e+=",GENE_LIST=${GENE_LIST},SPECIES_TREE=${SPECIES_TREE}"
+    e+=",BAT_ANNOTATION_DIR=${BAT_ANNOTATION_DIR},HUMAN_GENOME_DIR=${HUMAN_GENOME_DIR}"
+    e+=",WORKING_DIR=${WORKING_DIR},CACHE_DIR=${CACHE_DIR}"
+    e+=",MORPHEUS_SEARCH=${SEARCH},MORPHEUS_SKIP_PLOT=${SKIP_PLOT}"
+    e+=",MORPHEUS_PER_GENE=${PER_GENE}"
+    e+=",MORPHEUS_ENV_MODE=${ENV_MODE},MORPHEUS_ENV_NAME=${ENV_NAME}"
+    [[ -n "${VENV_PATH}" ]] && e+=",MORPHEUS_VENV_PATH=${VENV_PATH}"
+    [[ ${SLURM_MODULE_SET} -eq 1 ]] && e+=",MORPHEUS_MODULE=${SLURM_MODULE_ARG}"
+    printf '%s' "${e}"
 }
 
 # ---------------------------------------------------------------------------
@@ -412,7 +430,7 @@ if [[ "${PER_GENE}" == "yes" ]]; then
     [[ -n "${OVERWRITE}" ]] && PASS+=(--overwrite)
     [[ -n "${FROM}" ]] && PASS+=(--from "${FROM}")
     for s in ${ONLY_STEPS[@]+"${ONLY_STEPS[@]}"}; do PASS+=(--only "$s"); done
-    [[ ${#SPECIES[@]-0} -gt 0 ]] && PASS+=(--species "${SPECIES[@]}")
+    [[ ${#SPECIES[@]} -gt 0 ]] && PASS+=(--species "${SPECIES[@]}")
 
     if [[ "${MODE}" == "slurm" ]]; then
         [[ ${DRY_RUN} -eq 1 ]] || command -v sbatch >/dev/null 2>&1 \
@@ -429,14 +447,7 @@ if [[ "${PER_GENE}" == "yes" ]]; then
         ARRAY_SPEC="1-${#GENES[@]}"
         [[ -n "${ARRAY_THROTTLE}" ]] && ARRAY_SPEC="${ARRAY_SPEC}%${ARRAY_THROTTLE}"
 
-        EXPORTS="ALL,MORPHEUS_HOME=${MORPHEUS_HOME},MORPHEUS_PROJECT_DIR=${WORKING_DIR}"
-        EXPORTS+=",GENE_LIST=${GENE_LIST},SPECIES_TREE=${SPECIES_TREE}"
-        EXPORTS+=",BAT_ANNOTATION_DIR=${BAT_ANNOTATION_DIR},HUMAN_GENOME_DIR=${HUMAN_GENOME_DIR}"
-        EXPORTS+=",WORKING_DIR=${WORKING_DIR},CACHE_DIR=${CACHE_DIR}"
-        EXPORTS+=",MORPHEUS_SEARCH=${SEARCH},MORPHEUS_SKIP_PLOT=${SKIP_PLOT}"
-        EXPORTS+=",MORPHEUS_ENV_MODE=${ENV_MODE},MORPHEUS_ENV_NAME=${ENV_NAME}"
-        [[ -n "${VENV_PATH}" ]] && EXPORTS+=",MORPHEUS_VENV_PATH=${VENV_PATH}"
-        [[ ${SLURM_MODULE_SET} -eq 1 ]] && EXPORTS+=",MORPHEUS_MODULE=${SLURM_MODULE_ARG}"
+        EXPORTS="$(build_exports)"
 
         if [[ ${DRY_RUN} -eq 1 ]]; then
             cat <<EOF
@@ -535,14 +546,7 @@ if [[ "${MODE}" == "slurm" ]]; then
     ARRAY_SPEC="1-${n_genomes}"
     [[ -n "${ARRAY_THROTTLE}" ]] && ARRAY_SPEC="${ARRAY_SPEC}%${ARRAY_THROTTLE}"
 
-    EXPORTS="ALL,MORPHEUS_HOME=${MORPHEUS_HOME},MORPHEUS_PROJECT_DIR=${WORKING_DIR}"
-    [[ ${SLURM_MODULE_SET} -eq 1 ]] && EXPORTS+=",MORPHEUS_MODULE=${SLURM_MODULE_ARG}"
-    EXPORTS+=",MORPHEUS_ENV_MODE=${ENV_MODE},MORPHEUS_ENV_NAME=${ENV_NAME}"
-    [[ -n "${VENV_PATH}" ]] && EXPORTS+=",MORPHEUS_VENV_PATH=${VENV_PATH}"
-    EXPORTS+=",GENE_LIST=${GENE_LIST},SPECIES_TREE=${SPECIES_TREE}"
-    EXPORTS+=",BAT_ANNOTATION_DIR=${BAT_ANNOTATION_DIR},HUMAN_GENOME_DIR=${HUMAN_GENOME_DIR}"
-    EXPORTS+=",WORKING_DIR=${WORKING_DIR},MORPHEUS_SEARCH=${SEARCH}"
-    EXPORTS+=",MORPHEUS_SKIP_PLOT=${SKIP_PLOT}"
+    EXPORTS="$(build_exports)"
 
     if [[ ${DRY_RUN} -eq 1 ]]; then
         cat <<EOF
@@ -630,7 +634,7 @@ Run 'morpheus env' to see what was resolved." >&2
 fi
 
 n_species=$(find "${BAT_ANNOTATION_DIR}" -maxdepth 1 -mindepth 1 -type d ! -name '.*' | wc -l | tr -d ' ')
-[[ ${#SPECIES[@]-0} -gt 0 ]] && n_species=${#SPECIES[@]}
+[[ ${#SPECIES[@]} -gt 0 ]] && n_species=${#SPECIES[@]}
 PLOT_MIN_SPECIES="$(plot_min_species_for "${n_species}")"
 cat <<EOF
 Morpheus $(cat "${MORPHEUS_HOME}/VERSION" 2>/dev/null || echo "")
@@ -682,7 +686,7 @@ fi
 if should_run bat-search; then
     banner "bat-search"
     species_args=()
-    [[ ${#SPECIES[@]-0} -gt 0 ]] && species_args=(--species "${SPECIES[@]}")
+    [[ ${#SPECIES[@]} -gt 0 ]] && species_args=(--species "${SPECIES[@]}")
     run bat-search --annotations "${BAT_ANNOTATION_DIR}" \
         --reference "${REFERENCE_DIR}" \
         --families "${REFERENCE_DIR}/gene_families.tsv" \

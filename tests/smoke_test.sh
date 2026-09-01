@@ -9,8 +9,12 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TMP="${HERE}/tests/tmp_smoke"
+# Unique per run: a fixed path means two concurrent invocations rm -rf each
+# other's scratch mid-test, and the loser reports a failure that has nothing to
+# do with the code.
+TMP="${HERE}/tests/tmp_smoke.$$"
 rm -rf "${TMP}"; mkdir -p "${TMP}"
+trap 'rm -rf "${TMP}"' EXIT
 # The `bash -c` checks below run in child shells; without exporting these they
 # expand to empty there and a check can pass for entirely the wrong reason.
 export HERE TMP
@@ -162,6 +166,11 @@ check bash -c '
 echo "-- help matches the program --"
 check python3 "${HERE}/tests/check_help.py" "${HERE}"
 
+echo "-- shell portability --"
+check python3 "${HERE}/tests/check_portability.py" "${HERE}"
+# The idiom the banned one was standing in for must actually be safe.
+check bash -c 'set -euo pipefail; A=(); [[ ${#A[@]} -eq 0 ]] && printf "%s" "${A[@]+"${A[@]}"}"'
+
 echo "-- results numbering is contiguous --"
 check python3 "${HERE}/tests/check_numbering.py" "${HERE}"
 
@@ -254,4 +263,9 @@ fi
 
 echo
 echo "== ${pass} passed, ${fail} failed =="
-[[ ${fail} -eq 0 ]] || { echo "see ${TMP}/log"; exit 1; }
+if [[ ${fail} -ne 0 ]]; then
+    # The scratch dir is about to be removed, so keep the log where it can be read.
+    cp "${TMP}/log" "${HERE}/tests/smoke_failure.log" 2>/dev/null || true
+    echo "see ${HERE}/tests/smoke_failure.log"
+    exit 1
+fi

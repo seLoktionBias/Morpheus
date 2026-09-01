@@ -77,6 +77,10 @@ explicit rather than convention-driven.
   commands for the local, cluster, no-paths.txt and resume-after-failure cases.
   `tests/check_help.py` holds them to the parser — every flag shown must be
   accepted, every flag accepted must be shown.
+- `tests/check_portability.py`: greps every shell file for constructs that work
+  on one bash and not another — `${#arr[@]-default}`, `mapfile`/`readarray`,
+  `${var^^}`, associative arrays. `bash -n` catches none of these, because the
+  first is a runtime expansion error and the rest are missing builtins.
 - `tests/check_numbering.py` and `tests/check_slurm.py`: contiguous numbering,
   shared preamble, valid job names and log paths, no Slurm job asking for a step
   the pipeline does not have, and `--mode slurm` submitting exactly the scripts
@@ -85,6 +89,24 @@ explicit rather than convention-driven.
   and the per-gene merge's column handling.
 
 ### Fixed
+
+- **`${#ARR[@]-0}` is invalid** — the `#` length operator cannot take a
+  `-default`. macOS bash 3.2 tolerated it; bash on a RHEL-family cluster
+  rejects it, so `00_reference` died on `bad substitution` and every dependent
+  job sat in `DependencyNeverSatisfied`. Replaced with `${#ARR[@]}`, which is
+  safe under `set -u` for an already-declared empty array.
+- **`--per_gene` was never propagated to the submitted jobs**, so each job
+  defaulted back to `yes` and re-entered the per-gene branch — under
+  `--per_gene no` the reference job tried to orchestrate the whole gene list
+  instead of flattening the GTF. The two near-identical `--export` blocks that
+  let this drift are now one `build_exports` function, and `slurm/_common.sh`
+  always passes `--per_gene no`: whether to split by gene is decided once, at
+  submit time.
+- `04_collect` chose its behaviour by testing whether `genes/` existed, so a
+  directory left by an earlier `--per_gene yes` run would hijack a later
+  `--per_gene no` one. It reads `MORPHEUS_PER_GENE` now.
+- The smoke test used a fixed scratch directory, so two concurrent runs deleted
+  each other's and the loser reported failures unrelated to the code.
 
 - **A mamba-only install was reported as "no conda installation found".**
   `activate_env` searched for a `conda` *binary* to locate the environment. A
