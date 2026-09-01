@@ -10,8 +10,6 @@ dependencies:
   # sequence search and alignment
   - blast
   - mafft
-  # selection analysis
-  - hyphy
   # interval arithmetic used by the optional bedtools helpers
   - bedtools
   # figures

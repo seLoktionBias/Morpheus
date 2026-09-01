@@ -5,12 +5,17 @@
 # This is the only embarrassingly parallel step: each genome is read
 # independently, so an array turns ~2 minutes x N genomes into ~2 minutes.
 #
-#   cd /path/to/your/project          # where paths.txt and gene_list.txt live
-#   sbatch --array=1-$(ls -d "$(awk -F= '/bat_annotation_dir/{print $2}' paths.txt)"/*/ | wc -l) \
-#          /path/to/Morpheus/slurm/01_bat_search_array.sbatch
+# Normally submitted for you, with the array size already worked out:
+#   morpheus run --mode slurm --gene_list genes.txt --path_file paths.txt
 #
-# Steps 1-3 (cds-table, human-reference, families) must have run first; see
-# 00_reference.sbatch. Merge the array output with 02_after_search.sbatch.
+# By hand, from the project directory:
+#   n=$(find "$(awk -F= '/bat_annotation_dir/{print $2}' paths.txt)" \
+#         -maxdepth 1 -mindepth 1 -type d ! -name '.*' | wc -l)
+#   sbatch --array=1-$n $MORPHEUS_HOME/slurm/01_bat_search_array.sbatch
+#
+# Steps 1-3 must have run first (00_reference.sbatch). Array tasks pass
+# --no-merge and 02_after_search merges them; merging inside each task would
+# race and leave partial combined tables.
 ###############################################################################
 #SBATCH --job-name=morpheus_search
 #SBATCH --mem=8G
@@ -20,24 +25,7 @@
 #SBATCH --error=logs/%x_%A_%a.err
 
 set -euo pipefail
-
-# Apocrita: the conda module is `miniforge`. Override MORPHEUS_MODULE for a
-# site that names it differently, or leave it empty if conda is already on PATH.
-MODULE="${MORPHEUS_MODULE-miniforge}"
-if [[ -n "${MODULE}" ]] && command -v module >/dev/null 2>&1; then
-    module load "${MODULE}" || true
-fi
-# shellcheck disable=SC1091
-source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate "${MORPHEUS_ENV:-Morpheus}"
-
-MORPHEUS_HOME="${MORPHEUS_HOME:?set MORPHEUS_HOME to the Morpheus checkout}"
-PROJECT_DIR="${MORPHEUS_PROJECT_DIR:-${SLURM_SUBMIT_DIR:-$(pwd)}}"
-cd "${PROJECT_DIR}"
-mkdir -p logs
-
-source "${MORPHEUS_HOME}/config/config.sh"
-export PYTHONPATH="${MORPHEUS_HOME}${PYTHONPATH:+:${PYTHONPATH}}"
+source "${MORPHEUS_HOME:?set MORPHEUS_HOME}/slurm/_common.sh"
 
 # One genome per array index, in a stable sorted order so a rerun of task N
 # always picks the same genome.

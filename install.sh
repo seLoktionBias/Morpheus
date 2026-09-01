@@ -76,7 +76,7 @@ try_staged() {
     env_exists_with "$mgr" || run "$mgr" create -y -n "${ENV_NAME}" \
         -c conda-forge -c bioconda python=3.11 pip git || return 1
     run "$mgr" install -y -n "${ENV_NAME}" -c conda-forge -c bioconda blast mafft || return 1
-    run "$mgr" install -y -n "${ENV_NAME}" -c conda-forge -c bioconda hyphy bedtools || return 1
+    run "$mgr" install -y -n "${ENV_NAME}" -c conda-forge -c bioconda bedtools || return 1
     run "$mgr" install -y -n "${ENV_NAME}" -c conda-forge r-base r-ape r-ggplot2 r-paletteer || return 1
     return 0
 }
@@ -118,7 +118,7 @@ check_tools() {
     done
     [[ -n "${envbin}" ]] && export PATH="${envbin}:${PATH}"
 
-    for exe in python3 blastx blastp makeblastdb mafft hyphy Rscript; do
+    for exe in python3 blastx blastp makeblastdb mafft Rscript; do
         if have "$exe"; then
             printf '  %-14s %s\n' "$exe" "$(command -v "$exe")"
         else

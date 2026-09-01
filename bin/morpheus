@@ -2,13 +2,15 @@
 ###############################################################################
 # morpheus - single entry point for the whole pipeline, or any part of it.
 #
-#   morpheus run                     # every step in order
-#   morpheus run --from assign       # resume from a step
-#   morpheus run --only copy-number  # one step
-#   morpheus run --dry-run           # print the plan and stop
-#   morpheus step bat-search --help  # the Python CLI directly, for one step
+#   morpheus run --gene MX1                    # one gene, here
+#   morpheus run --gene_list genes.txt         # many genes, here
+#   morpheus run --path_file paths.txt --mode slurm   # submit the whole chain
+#   morpheus run --search region --skip_plot   # locus only, tables only
+#   morpheus run --from assign                 # resume from a step
+#   morpheus run --dry-run                     # print the plan and stop
+#   morpheus step bat-search --help            # the Python CLI, for one step
 #   morpheus plot exon-models --gene MX1
-#   morpheus env                     # show what was resolved and exit
+#   morpheus env                               # show what was resolved
 #
 # The package works from a git checkout with no installation: this script finds
 # its own directory, so `bin/morpheus` and `/path/to/Morpheus/bin/morpheus`
@@ -21,7 +23,7 @@ MORPHEUS_HOME="$(cd "${here}/.." && pwd)"
 export MORPHEUS_HOME
 
 usage() {
-    sed -n '3,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '3,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     cat <<'EOF'
 
 Commands:
@@ -45,8 +47,7 @@ activate_environment() {
     fi
     # A site module system (Apocrita: `ml miniforge`) may already have put the
     # tools on PATH without a named conda env. Accept that.
-    if command -v hyphy >/dev/null 2>&1 && command -v mafft >/dev/null 2>&1 \
-       && command -v blastx >/dev/null 2>&1; then
+    if command -v mafft >/dev/null 2>&1 && command -v blastx >/dev/null 2>&1; then
         return 0
     fi
 
@@ -80,7 +81,7 @@ Morpheus $(cat "${MORPHEUS_HOME}/VERSION" 2>/dev/null || echo "unknown")
   python          $(python_bin 2>/dev/null || echo MISSING)
 EOF
     local missing=0
-    for exe in python3 blastx blastp makeblastdb mafft hyphy Rscript; do
+    for exe in python3 blastx blastp makeblastdb mafft Rscript; do
         if command -v "$exe" >/dev/null 2>&1; then
             printf '  %-14s %s\n' "$exe" "$(command -v "$exe")"
         else
@@ -90,6 +91,36 @@ EOF
     if command -v Rscript >/dev/null 2>&1; then
         Rscript -e 'for (p in c("ape","ggplot2","paletteer")) cat(sprintf("  R:%-12s %s\n", p, requireNamespace(p, quietly=TRUE)))' 2>/dev/null
     fi
+
+    # Resolving the inputs is the half people actually get wrong, so show what
+    # paths.txt and the defaults produced, and whether each thing is there.
+    # A subshell, so a bad paths.txt is reported rather than killing this.
+    echo
+    (
+        set +u
+        # shellcheck disable=SC1091
+        if ! source "${MORPHEUS_HOME}/config/config.sh"; then
+            echo "Inputs: config could not be loaded (see the error above)"
+            exit 0
+        fi
+        echo "Inputs resolved from ${PATHS_FILE}:"
+        _show() {  # label, path, d|f
+            local mark="MISSING"
+            [[ "$3" == "d" && -d "$2" ]] && mark="ok"
+            [[ "$3" == "f" && -s "$2" ]] && mark="ok"
+            printf '  %-12s %-8s %s\n' "$1" "${mark}" "${2:-<unset>}"
+        }
+        _show "paths.txt" "${PATHS_FILE}"         f
+        _show "bat_dir"   "${BAT_ANNOTATION_DIR}" d
+        _show "ref_dir"   "${HUMAN_GENOME_DIR}"   d
+        _show "output"    "${WORKING_DIR}"        d
+        _show "tree"      "${SPECIES_TREE}"       f
+        _show "gene_list" "${GENE_LIST}"          f
+        _show "human GTF" "${HUMAN_GTF}"          f
+        _show "human CDS" "${HUMAN_CDS_FASTA}"    f
+        printf '  %-12s %-8s %s\n' "results" "->" "${RESULTS_DIR}"
+    )
+
     [[ $missing -eq 0 ]] || echo "
 Some tools are missing. Run: bash install.sh"
     return 0

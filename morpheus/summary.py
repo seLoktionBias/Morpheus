@@ -20,9 +20,6 @@ SUMMARY_FIELDS = [
     "transcripts_complete_only_off_locus", "scope_disagreements",
     "copies_median", "copies_min", "copies_max",
     "species_with_extra_copy", "species_with_no_copy", "retro_copies",
-    "busted_significant", "absrel_transcripts_with_significant_branch",
-    "absrel_significant_branches", "meme_sites", "fel_positive_sites",
-    "fel_negative_sites",
 ]
 
 
@@ -44,10 +41,6 @@ def build(results_dir, outdir=None, policy: str = "synteny_aware") -> Path:
     copies = read_tsv(results / "04_copy_number" / "copy_number_matrix.tsv")
     copy_loci = read_tsv(results / "04_copy_number" / "gene_copies.tsv")
     manifest = read_tsv(results / "05_genes" / policy / "manifest.tsv")
-    sel = results / "06_selection" / policy
-    hyphy_genes = read_tsv(sel / "hyphy_gene_level.tsv")
-    hyphy_branches = read_tsv(sel / "hyphy_absrel_branches.tsv")
-    hyphy_sites = read_tsv(sel / "hyphy_selected_sites.tsv")
 
     genes = [r["gene"] for r in reference if r.get("status") == "OK"]
     chrom = {r["gene"]: r.get("chrom", "NA") for r in reference}
@@ -92,33 +85,6 @@ def build(results_dir, outdir=None, policy: str = "synteny_aware") -> Path:
         if r.get("copy_class") == "retro_or_processed":
             retro[r["gene"]] += 1
 
-    busted: Dict[str, int] = defaultdict(int)
-    absrel_tx: Dict[str, int] = defaultdict(int)
-    for r in hyphy_genes:
-        if r.get("significant_at_0.05") != "1":
-            continue
-        if r.get("method") == "busted":
-            busted[r["gene"]] += 1
-        elif r.get("method") == "absrel":
-            absrel_tx[r["gene"]] += 1
-
-    absrel_branches: Dict[str, int] = defaultdict(int)
-    for r in hyphy_branches:
-        if r.get("significant_at_0.05") == "1":
-            absrel_branches[r["gene"]] += 1
-
-    meme: Dict[str, int] = defaultdict(int)
-    fel_pos: Dict[str, int] = defaultdict(int)
-    fel_neg: Dict[str, int] = defaultdict(int)
-    for r in hyphy_sites:
-        if r.get("method") == "meme":
-            meme[r["gene"]] += 1
-        elif r.get("method") == "fel":
-            if r.get("selection_direction") == "positive":
-                fel_pos[r["gene"]] += 1
-            else:
-                fel_neg[r["gene"]] += 1
-
     rows = []
     for gene in sorted(genes):
         cn = copies_by_gene.get(gene, [])
@@ -138,12 +104,6 @@ def build(results_dir, outdir=None, policy: str = "synteny_aware") -> Path:
             "species_with_extra_copy": sum(1 for x in cn if x > 1),
             "species_with_no_copy": sum(1 for x in cn if x == 0),
             "retro_copies": retro.get(gene, 0),
-            "busted_significant": busted.get(gene, 0),
-            "absrel_transcripts_with_significant_branch": absrel_tx.get(gene, 0),
-            "absrel_significant_branches": absrel_branches.get(gene, 0),
-            "meme_sites": meme.get(gene, 0),
-            "fel_positive_sites": fel_pos.get(gene, 0),
-            "fel_negative_sites": fel_neg.get(gene, 0),
         })
 
     log(f"summary built from the '{policy}' ranking")
@@ -166,8 +126,6 @@ def _write_report(rows: List[dict], results: Path, path: Path,
 
     total_rescued = sum(r["transcripts_complete_only_off_locus"] for r in rows)
     total_disagree = sum(r["scope_disagreements"] for r in rows)
-    any_selection = any(r["busted_significant"] or r["absrel_significant_branches"]
-                        for r in rows)
 
     lines = [
         f"# Analysis summary - {policy} ranking",
@@ -187,8 +145,8 @@ def _write_report(rows: List[dict], results: Path, path: Path,
         "",
         "## Does the search scope change the answer?",
         "",
-        "Transcript status uses the gene's own syntenic locus; alignment and "
-        "selection use the gene wherever it occurs, paralogs still excluded.",
+        "Transcript status uses the gene's own syntenic locus; the sequence "
+        "sets use the gene wherever it occurs, paralogs still excluded.",
         "",
         f"- **{total_disagree}** transcript/species cells differ between the two "
         "scopes.",
@@ -210,23 +168,6 @@ def _write_report(rows: List[dict], results: Path, path: Path,
                "species_with_extra_copy", "species_with_no_copy", "retro_copies"],
               sort_key=lambda r: -r["copies_max"]),
         "",
-        "## Selection",
-        "",
-    ]
-    if any_selection:
-        lines.append(
-            table(["Gene", "BUSTED sig. tx", "aBSREL sig. tx", "aBSREL sig. branches",
-                   "MEME sites", "FEL positive", "FEL negative"],
-                  ["gene", "busted_significant",
-                   "absrel_transcripts_with_significant_branch",
-                   "absrel_significant_branches", "meme_sites",
-                   "fel_positive_sites", "fel_negative_sites"],
-                  sort_key=lambda r: -r["absrel_significant_branches"]))
-    else:
-        lines.append("_No HyPhy results found. Run the `hyphy` step._")
-
-    lines += [
-        "",
         "## Where things are",
         "",
         "| What | Path |",
@@ -241,8 +182,7 @@ def _write_report(rows: List[dict], results: Path, path: Path,
         f"| Copy number per species | `{results.name}/04_copy_number/copy_number_matrix.tsv` |",
         f"| Each copy locus, with evidence | `{results.name}/04_copy_number/gene_copies.tsv` |",
         f"| Paralog screen verdicts | `{results.name}/02_bat_search/paralog_screen.tsv` |",
-        f"| Selection results | `{results.name}/06_selection/{policy}/` |",
-        f"| Figures | `{results.name}/07_plots/` |",
+        f"| Figures | `{results.name}/06_plots/` |",
         "",
     ]
     path.write_text("\n".join(lines) + "\n")

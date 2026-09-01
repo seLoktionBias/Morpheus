@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 ###############################################################################
-# Everything between the search array and the selection analyses: merge the
-# per-species output, screen against the proteome, assign transcripts under both
-# scopes, compare them, count copies, build the deliverables, align.
+# Everything between the search array and the deliverables: merge the
+# per-species output, screen against the proteome, assign transcripts under
+# each requested scope, compare them, count copies, build the sequence sets,
+# align.
 #
 #   sbatch --dependency=afterok:<search_array_jobid> \
 #          /path/to/Morpheus/slurm/02_after_search.sbatch

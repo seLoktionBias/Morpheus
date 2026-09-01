@@ -1,16 +1,20 @@
 # Morpheus
 
-Comparative transcript recovery, gene copy number, and selection analysis across
-TOGA2-annotated genomes.
+Comparative transcript recovery, orthologous transcript assignment, and gene copy
+number across TOGA2-annotated genomes.
 
 Give it a list of human genes, a species tree, and a directory of TOGA2 results —
 one per genome — and it recovers each gene's transcripts in every genome, decides
 which query transcript corresponds to which human transcript, counts gene copies,
-assembles ready-to-analyse alignments with matching pruned trees, and runs
-selection tests that need no branch labelling.
+and assembles ready-to-analyse codon alignments with matching pruned trees.
 
-Everything runs locally or on SLURM. The pipeline logic uses only the Python
-standard library; the external tools are BLAST, MAFFT, HyPhy and R.
+Morpheus stops at the alignment. It deliberately runs no selection tests: which
+model, which branches, and which correction to apply are decisions that belong to
+whoever is asking the question, and the output is laid out so that any codon-model
+tool can be pointed straight at it.
+
+Everything runs locally or on Slurm from the same command. The pipeline logic uses
+only the Python standard library; the external tools are BLAST, MAFFT and R.
 
 ---
 
@@ -25,7 +29,7 @@ standard library; the external tools are BLAST, MAFFT, HyPhy and R.
 - [Method, step by step](#method-step-by-step)
 - [Output layout](#output-layout)
 - [Figures](#figures)
-- [Running on SLURM](#running-on-slurm)
+- [Running on Slurm](#running-on-slurm)
 - [Settings](#settings)
 - [Design notes](#design-notes)
 
@@ -103,21 +107,76 @@ figure script against synthetic input).
 ### Requirements
 
 `python3` ≥ 3.9 (no third-party packages), `blastx`, `blastp`, `makeblastdb`,
-`mafft`, `hyphy`, and `R` with `ape`, `ggplot2`, `paletteer`.
+`mafft`, and `R` with `ape`, `ggplot2`, `paletteer`. With `--skip_plot`, R is not
+needed at all.
 
 ---
 
 ## Quick start
 
-Work from your project directory — the one holding `paths.txt`, `gene_list.txt`
-and the species tree. Results are written to `results/` there.
+One gene, everything else taken from `paths.txt` in the current directory:
 
 ```bash
-morpheus run                     # every step, in order
+morpheus run --gene OAS1
+```
+
+A list of genes, on the cluster, submitted as one dependency chain:
+
+```bash
+morpheus run --gene_list gene_list.txt --path_file paths.txt --mode slurm
+```
+
+Nothing but the tables, and only the syntenic locus:
+
+```bash
+morpheus run --gene_list gene_list.txt --search region --skip_plot
+```
+
+### Every flag
+
+| Flag | Meaning |
+|---|---|
+| `--gene NAME` | a single gene symbol; `--gene_list` is then not needed |
+| `--gene_list FILE` | a file with one gene symbol per line; `--gene` is then not needed |
+| `--mode local\|slurm` | run here, or submit the whole chain (default `local`) |
+| `--search region\|similarity\|both` | how much to search (default `both`, see below) |
+| `--tree FILE` | species tree in Newick, full path including the filename |
+| `--bat_dir DIR` | TOGA2 annotation directory, one sub-directory per genome |
+| `--ref_dir DIR` | human genome and Ensembl annotation directory |
+| `--output DIR` | working/output directory (default: the current directory) |
+| `--path_file FILE` | supply `--bat_dir`, `--ref_dir` and `--output` from a file instead |
+| `--skip_plot` | write no figures, only tables — saves time and disk |
+| `--from STEP` | resume from a step |
+| `--only STEP` | run one step (repeatable) |
+| `--species NAME...` | restrict the search to these `Genus_species` |
+| `--overwrite` | redo per-species searches already on disk |
+| `--dry-run` | print the plan and stop; works in `--mode slurm` too |
+
+Give either `--gene` or `--gene_list`, not both. Give either `--path_file` or the
+`--bat_dir` / `--ref_dir` / `--output` trio; a flag always overrides the file, so
+you can keep one `paths.txt` and redirect a single run with `--output`.
+
+**What `--search` selects.** Scope (*where* to look) and ranking (*how* to choose
+between what you find) are separate axes, and this one flag deliberately couples
+them into the two combinations that answer a real question:
+
+| `--search` | Scope | Ranking | The question it answers |
+|---|---|---|---|
+| `region` | the gene's own syntenic locus | synteny + exon structure | *what does this locus produce?* — the conservative orthology answer |
+| `similarity` | the gene anywhere, paralogs still excluded | sequence identity | *what is the closest match this animal has?* — finds a functional copy elsewhere when the locus has diverged |
+| `both` | both scopes | both rankings | all four combinations, side by side (default) |
+
+`region` and `similarity` each run roughly half the work of `both`. `both` also
+writes the scope comparison, which needs both scopes to exist; with `region` or
+`similarity` that step and its figure are skipped automatically.
+
+### Partial runs
+
+```bash
 morpheus run --dry-run           # print the plan and stop
 morpheus run --from assign       # resume from a step
 morpheus run --only copy-number  # a single step
-morpheus run --species Myotis_myotis Desmodus_rotundus   # restrict the search
+morpheus env                     # what did it resolve? what is missing?
 ```
 
 Every step reads only what earlier steps wrote, so re-running one never
@@ -133,17 +192,63 @@ morpheus plot exon-models --gene MX1
 morpheus version
 ```
 
+`morpheus env` is the first thing to run when something will not start: it prints
+the resolved tool paths and every input path with `ok` or `MISSING` beside it.
+
 ---
 
 ## Inputs
 
-`paths.txt` in the project directory supplies the three locations:
+### `paths.txt`
+
+Morpheus needs three directories. Put them in a `paths.txt` and you never type
+them again. A copy ready to edit is in [`examples/paths.txt`](examples/paths.txt).
 
 ```
-human_genome_dir=/path/to/human_genome
-bat_annotation_dir=/path/to/toga2_results
-primary_working_dir=/path/to/project
+# Morpheus paths.txt - one key=value per line.
+# Blank lines and #-comments are ignored; trailing comments are stripped;
+# surrounding quotes are tolerated; a leading ~ is expanded; keys are
+# case-insensitive.
+
+human_genome_dir=/data/reference/human
+bat_annotation_dir=/data/toga2/bat1k
+primary_working_dir=/scratch/me/isg_project
 ```
+
+That is the whole required file. The keys, in full:
+
+| Key | Also accepted as | Required | What it is |
+|---|---|---|---|
+| `human_genome_dir` | `human_dir`, `ref_dir`, `reference_dir` | yes | human genome + Ensembl annotation |
+| `bat_annotation_dir` | `bat_dir`, `toga_dir`, `toga2_dir`, `annotation_dir` | yes | TOGA2 output, one sub-directory per genome |
+| `primary_working_dir` | `working_dir`, `output`, `output_dir`, `outdir` | yes | where `results/` is created |
+| `tree` | `species_tree`, `tree_file` | no | species tree; defaults to `bat1k_tree.nwk` in the project directory |
+| `gene_list` | `genes`, `gene_list_file` | no | defaults to `gene_list.txt` in the project directory |
+
+A key that is not on this list is a **typo, and is reported as an error** rather
+than ignored — a silently dropped `hooman_genome_dir` would otherwise send the
+whole run at a default directory that does not exist, and you would find out an
+hour later.
+
+By default Morpheus reads `paths.txt` from the directory you run in. `--path_file
+/elsewhere/paths.txt` reads it from there instead, and treats that directory as
+the project, so `gene_list.txt` and the tree are looked for next to it.
+
+Every key has a command-line equivalent that overrides it:
+
+```bash
+# no paths.txt at all
+morpheus run --gene OAS1 \
+  --ref_dir /data/reference/human \
+  --bat_dir /data/toga2/bat1k \
+  --output  /scratch/me/isg_project \
+  --tree    /data/reference/bat1k_tree.nwk
+
+# shared paths.txt, but this run writes somewhere else
+morpheus run --gene_list genes.txt --path_file /shared/paths.txt --output ./run2
+```
+
+### The files themselves
 
 | Input | Where | Notes |
 |---|---|---|
@@ -176,7 +281,8 @@ in place — nothing is unpacked.
 
 ## Two search scopes
 
-Two questions need two search scopes, and they genuinely disagree.
+`--search` chooses between them; `both` is the default. Two questions need two
+search scopes, and they genuinely disagree.
 
 | Scope | Searches | Answers |
 |---|---|---|
@@ -184,9 +290,9 @@ Two questions need two search scopes, and they genuinely disagree.
 | `unrestricted` | the gene anywhere in the genome, paralogs still excluded | does the animal make this protein at all? |
 
 Transcript status uses the region-restricted scope: a paralog elsewhere cannot
-stand in for a transcript the locus itself has lost. Alignment and selection use
+stand in for a transcript the locus itself has lost. The sequence sets use
 the unrestricted scope: if the animal makes the protein from a different genomic
-address, that is the sequence selection acts on. The unrestricted scope is still
+address, that is the sequence to analyse. The unrestricted scope is still
 delimited *by gene* — outside the locus a candidate is kept only when the
 whole-proteome screen says the gene it most resembles is the target itself.
 
@@ -379,16 +485,24 @@ Each transcript directory holds:
 <GENE>__<TRANSCRIPT>.tree.nwk      species tree pruned to exactly those species
 <GENE>__<TRANSCRIPT>.members.tsv   provenance for every sequence
 <GENE>__<TRANSCRIPT>.codon.aln.fa  codon alignment            (align step)
-hyphy/                             HyPhy JSON and logs        (hyphy step)
+```
+
+The alignment and its pruned tree are named alike and hold exactly the same taxa,
+so a codon-model tool can be pointed at the pair directly:
+
+```bash
+cd results/05_genes/synteny_aware/gene_files_selected/OAS1/OAS1__ENST00000202917
+hyphy absrel --alignment OAS1__ENST00000202917.codon.aln.fa \
+             --tree      OAS1__ENST00000202917.tree.nwk
 ```
 
 FASTA headers are the bare tree tip label — `Homo_sapiens`, `Myotis_myotis` — so
 the multifasta and the Newick agree character for character. The projection each
 sequence came from is in `members.tsv`, not stuffed into the header.
 
-Only the selected set goes on to alignment and selection: a transcript recovered
-in three species out of a hundred cannot support a codon model, and aligning it
-pads the results with noise. Everything is still kept and can be inspected.
+Only the selected set goes on to alignment: a transcript recovered in three
+species out of a hundred cannot support a codon model, and aligning it pads the
+results with noise. Everything is still kept and can be inspected.
 
 ### 8. Alignment — `align`
 
@@ -400,21 +514,6 @@ TOGA2 models are frequently frameshifted or carry premature stops. Rather than
 discarding them, each sequence is trimmed to whole codons and internal stops are
 masked to `NNN`, so one disrupted codon does not truncate the protein and wreck
 the alignment. Every edit is recorded in `alignment_preparation.tsv`.
-
-### 9. Selection — `hyphy`
-
-aBSREL, BUSTED, MEME and FEL, all on the unlabelled tree — nothing depends on
-choosing foreground lineages in advance. The tree is re-pruned to exactly the
-taxa present in each alignment before running.
-
-HyPhy scales poorly inside one analysis, so parallelism is *across* analyses:
-`--jobs` runs several at once with `--hyphy-threads` cores each. `--longest-only`
-analyses one representative transcript per gene. Resume only reuses a JSON that
-actually parses, so an interrupted run cannot leave a truncated file that later
-passes for finished.
-
-The JSON is flattened into three tidy tables: `hyphy_gene_level.tsv`,
-`hyphy_absrel_branches.tsv`, `hyphy_selected_sites.tsv`.
 
 ---
 
@@ -442,17 +541,16 @@ results/
 │                                contested_loci, overlapping_copy_loci
 ├── 05_genes/<policy>/           all_gene_files/, gene_files_selected/,
 │                                manifest.tsv, transcript_status_<scope>.tsv
-├── 06_selection/<policy>/       hyphy_gene_level, hyphy_absrel_branches,
-│                                hyphy_selected_sites
-├── 07_plots/                    copy-number figure (policy-independent)
+├── 06_plots/                    copy-number figure (policy-independent)
 │   └── <policy>/                status and scope-comparison figures
 ├── SUMMARY__<policy>.md         start here
 └── SUMMARY__<policy>.tsv
 ```
 
-Every step directory is created up front, so a step that has not run yet leaves a
-visible empty directory with a `.not_run_yet` marker rather than a hole in the
-numbering.
+The six step directories are numbered `01`–`06` with no gaps. Each is created up
+front, so a step that has not run yet leaves a visible empty directory carrying a
+`.not_run_yet` marker rather than a hole in the numbering; the marker is removed
+as soon as the step produces something. `--skip_plot` omits `06_plots/` entirely.
 
 Scratch BLAST databases live under `02_bat_search/*_work/` and
 `03_transcript_assignment/blast_work/` and can be deleted at any time.
@@ -507,52 +605,66 @@ Tunables: `--intron-mode log|sqrt|linear|none`, `--intron-factor`,
 
 ---
 
-## Running on SLURM
+## Running on Slurm
 
-Written for Apocrita (`ml miniforge`); set `MORPHEUS_MODULE` for a site that
-names its conda module differently, or to the empty string if conda is already
-on `PATH`.
+```bash
+morpheus run --gene_list gene_list.txt --path_file paths.txt --mode slurm
+```
+
+That is the whole thing. It resolves the inputs, counts the genomes, and submits
+four jobs wired together with dependencies:
+
+```
+morpheus_reference     steps 1-3          32G   6h
+morpheus_search        array 1-N          8G    2h    one task per genome
+morpheus_post_search   screen -> align    32G   12h
+morpheus_collect       figures, summary   16G   4h
+```
+
+It prints the four job IDs and a ready-made `squeue -j` line. Logs land in
+`<output>/logs/`. `--dry-run` shows what would be submitted without submitting
+it, and works on a machine with no `sbatch` at all — useful for checking a
+command on your laptop before running it on the cluster.
+
+`--search` and `--skip_plot` are carried into every job, so one submitted chain
+runs the same analysis end to end.
+
+### Which module to load
+
+Written for Apocrita, where conda comes from `ml miniforge`. For a site that
+names it differently:
+
+```bash
+export MORPHEUS_MODULE=<your conda module>   # or "" if conda is already on PATH
+```
+
+### Submitting by hand
+
+The scripts work standalone if you would rather control the chain yourself.
+They read `paths.txt` from the submission directory as usual.
 
 ```bash
 export MORPHEUS_HOME=/path/to/Morpheus
 cd /path/to/project
 
 ref=$(sbatch --parsable $MORPHEUS_HOME/slurm/00_reference.sbatch)
-
 n=$(find "$(awk -F= '/bat_annotation_dir/{print $2}' paths.txt)" \
       -maxdepth 1 -mindepth 1 -type d ! -name '.*' | wc -l)
 arr=$(sbatch --parsable --dependency=afterok:$ref --array=1-$n \
       $MORPHEUS_HOME/slurm/01_bat_search_array.sbatch)
-
-sbatch --dependency=afterok:$arr $MORPHEUS_HOME/slurm/02_after_search.sbatch
+post=$(sbatch --parsable --dependency=afterok:$arr \
+       $MORPHEUS_HOME/slurm/02_after_search.sbatch)
+sbatch --dependency=afterok:$post $MORPHEUS_HOME/slurm/03_collect.sbatch
 ```
-
-Stop there and wait for `02_after_search` to finish. The size of the HyPhy array
-is the number of alignments that cleared the species threshold, and nothing
-knows that number until the deliverables step has written the manifests — so it
-cannot be computed at submission time on a fresh run. Once `02` is done:
-
-```bash
-n=$(bash $MORPHEUS_HOME/slurm/03_hyphy_array.sbatch --count)
-hy=$(sbatch --parsable --array=1-$n%20 $MORPHEUS_HOME/slurm/03_hyphy_array.sbatch)
-sbatch --dependency=afterany:$hy $MORPHEUS_HOME/slurm/04_collect.sbatch
-```
-
-`--count` enumerates the same task list the array indexes into, across **both**
-ranking policies, so the two can never disagree. `--list` prints it numbered,
-which is what to read when one task fails and you want to know which gene it
-was.
 
 The search is the only embarrassingly parallel step — each genome is read
 independently — so the array turns *N* × 2 minutes into 2 minutes. Array tasks
 pass `--no-merge` and a single `merge-search` job combines them afterwards;
 merging inside each task would race and leave partial combined tables.
 
-`04_collect` uses `afterany`, not `afterok`: one analysis timing out should not
-stop the rest from being collected. Failures are recorded in
-`hyphy_gene_level.tsv`.
-
----
+`02_after_search` is the long pole, not the array: it BLASTs every candidate
+against the whole human proteome. That result is cached against a content hash of
+the query, so a rerun that changes only downstream logic does not repeat it.
 
 ## Settings
 
@@ -565,19 +677,15 @@ Override by exporting before running, or edit `config/config.sh`.
 | `PLOT_MIN_SPECIES` | 50 | species needed for a transcript column to be plotted |
 | `MIN_ASSIGNMENT_SCORE` | 0.30 | below this a human transcript stays unassigned |
 | `MIN_ASSIGNMENT_PIDENT` | 40 | protein identity floor for any assignment |
-| `POLICIES` | both | ranking policies to build |
+| `POLICIES` | both | ranking policies to build (normally set by `--search`) |
 | `DEFAULT_POLICY` | `synteny_aware` | which ranking the summary reports on |
 | `FAMILY_MIN_FRACTION` | 0.25 | paralog family membership threshold |
 | `COPY_CLUSTER_SLOP` | 10000 | bp gap tolerated when rejoining one gene's fragments |
-| `HYPHY_METHODS` | `absrel busted meme fel` | which analyses to run |
-| `HYPHY_JOBS` / `HYPHY_THREADS` | cores/2, 2 | concurrent analyses × cores each |
-| `HYPHY_TIMEOUT` | none | seconds per analysis |
-| `HYPHY_LONGEST_ONLY` | 0 | 1 = one transcript per gene |
 | `MORPHEUS_ENV` | `Morpheus` | conda environment name |
 | `MORPHEUS_MODULE` | `miniforge` | site module to load on a cluster |
 
 ```bash
-THREADS=4 HYPHY_METHODS="absrel busted" morpheus run --from hyphy
+THREADS=16 MIN_SPECIES_FRACTION=0.75 morpheus run --gene_list genes.txt
 ```
 
 ---
@@ -585,6 +693,14 @@ THREADS=4 HYPHY_METHODS="absrel busted" morpheus run --from hyphy
 ## Design notes
 
 A few choices that are not obvious from the code.
+
+**No selection analysis.** Morpheus produces alignments and trees and stops.
+Choosing a model, deciding which branches are foreground, and picking a multiple-
+testing correction are the parts of a selection analysis that carry the actual
+claim, and they belong to whoever is making it — not to a pipeline that ran
+overnight with defaults nobody revisited. Each `gene_files_selected/` directory
+holds an alignment and a pruned tree with identical taxa and identical labels, so
+pointing any codon-model tool at it is one command.
 
 **No third-party Python.** The Hungarian solver, the Newick parser, the BED12 and
 GTF readers and every table parser are standard library. A failed conda solve

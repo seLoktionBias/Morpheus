@@ -1,0 +1,41 @@
+# Morpheus paths.txt
+# ------------------
+# One key=value per line. Blank lines and #-comments are ignored, trailing
+# comments are stripped, surrounding quotes are tolerated, and a leading ~ is
+# expanded. Keys are case-insensitive.
+#
+# Copy this file to your project directory, edit the three paths, and run:
+#     morpheus run --gene_list gene_list.txt
+# or point at it from anywhere:
+#     morpheus run --gene_list gene_list.txt --path_file /path/to/paths.txt
+#
+# Anything you also pass as a flag (--bat_dir, --ref_dir, --output, --tree)
+# overrides what is written here.
+
+# --- required ---------------------------------------------------------------
+
+# Human genome and Ensembl annotation. Morpheus looks in here for
+#   Homo_sapiens.*.gtf.gz        the Ensembl GTF
+#   Homo_sapiens.*.cds.all.fa    the Ensembl CDS FASTA
+#   longest_pc_tx.tsv            longest protein-coding transcript per gene
+# Also accepted as: human_dir, ref_dir, reference_dir
+human_genome_dir=/data/reference/human
+
+# TOGA2 output: one sub-directory per query genome, each holding
+# query_annotation.bed.gz, processed_pseudogenes.bed.gz,
+# fragmented_annotation.bed.gz, nucleotide.fa.gz, query_genes.bed.gz,
+# loss_summary.tsv.gz and orthology_classification.tsv.gz.
+# Morpheus only ever reads from here.
+# Also accepted as: bat_dir, toga_dir, toga2_dir, annotation_dir
+bat_annotation_dir=/data/toga2/bat1k
+
+# Where results/ is created. Everything Morpheus writes goes under here.
+# Also accepted as: working_dir, output, output_dir, outdir
+primary_working_dir=/scratch/me/isg_project
+
+# --- optional ---------------------------------------------------------------
+# Without these, Morpheus looks for bat1k_tree.nwk and gene_list.txt in the
+# project directory. Command-line --tree and --gene_list override both.
+
+# tree=/data/reference/bat1k_tree.nwk
+# gene_list=/scratch/me/isg_project/gene_list.txt

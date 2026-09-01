@@ -3,7 +3,12 @@
 # Steps 1-3: flatten the Ensembl GTF, build the human reference, define the
 # paralog families. Run once; the GTF table is cached and reused thereafter.
 #
-#   sbatch /path/to/Morpheus/slurm/00_reference.sbatch
+# Normally submitted for you:
+#   morpheus run --mode slurm --gene_list genes.txt --path_file paths.txt
+#
+# By hand:
+#   export MORPHEUS_HOME=/path/to/Morpheus
+#   sbatch $MORPHEUS_HOME/slurm/00_reference.sbatch
 #
 # Memory is set for the GTF parse, which is the heaviest part of the pipeline
 # on a login node and the usual reason a naive run gets killed there.

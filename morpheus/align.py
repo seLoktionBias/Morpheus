@@ -3,7 +3,7 @@
 CDS sequences are translated, the proteins are aligned with MAFFT (L-INS-i),
 and the nucleotides are threaded back onto the protein alignment. Aligning
 amino acids and back-translating is frame-safe: it cannot open a gap that is
-not a multiple of three, which is what HyPhy's codon models require.
+not a multiple of three, which is what any codon model requires.
 
 TOGA2 models are often frameshifted or carry premature stops. Rather than
 discarding them, each sequence is trimmed to a whole number of codons and its

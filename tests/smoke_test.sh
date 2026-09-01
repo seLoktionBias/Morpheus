@@ -11,6 +11,9 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="${HERE}/tests/tmp_smoke"
 rm -rf "${TMP}"; mkdir -p "${TMP}"
+# The `bash -c` checks below run in child shells; without exporting these they
+# expand to empty there and a check can pass for entirely the wrong reason.
+export HERE TMP
 export PYTHONPATH="${HERE}${PYTHONPATH:+:${PYTHONPATH}}"
 
 pass=0; fail=0
@@ -76,11 +79,65 @@ PY
 echo "-- CLI --"
 check python3 -m morpheus --help
 for step in cds-table human-reference families bat-search merge-search screen \
-            assign compare copy-number deliverables align hyphy summary; do
+            assign compare copy-number deliverables align summary; do
     check python3 -m morpheus "${step}" --help
 done
 check bash "${HERE}/bin/morpheus" version
 check bash "${HERE}/bin/morpheus" help
+check bash "${HERE}/scripts/run_pipeline.sh" --help
+
+# Bad flag values must be refused, not silently coerced into a default that
+# quietly runs the wrong analysis.
+refuses() {  # label, then the args to pass to run_pipeline
+    local label="$1"; shift
+    if bash "${HERE}/scripts/run_pipeline.sh" "$@" >>"${TMP}/log" 2>&1; then
+        echo "  FAIL  refuses ${label}"; fail=$((fail+1))
+    else
+        echo "  PASS  refuses ${label}"; pass=$((pass+1))
+    fi
+}
+refuses "--mode nonsense"         --mode nonsense --dry-run
+refuses "--search nonsense"       --search nonsense --dry-run
+refuses "--only bogus-step"       --only bogus-step --dry-run
+refuses "--from bogus-step"       --from bogus-step --dry-run
+refuses "an unknown flag"         --not-a-flag --dry-run
+refuses "--gene with --gene_list" --gene A --gene_list /dev/null --dry-run
+refuses "a missing --path_file"   --path_file /nonexistent/paths.txt --dry-run
+
+echo "-- selection analysis is gone --"
+check bash -c '! grep -rniE "hyphy|absrel|busted" \
+    --include="*.py" --include="*.sh" --include="*.sbatch" --include="*.yml" \
+    --include="*.R" "${HERE}/morpheus" "${HERE}/scripts" "${HERE}/slurm" \
+    "${HERE}/config" "${HERE}/R" "${HERE}/bin" "${HERE}/environment.yml"'
+check bash -c '[[ ! -e "${HERE}/morpheus/hyphy.py" ]]'
+check bash -c '! python3 -m morpheus hyphy --help 2>/dev/null'
+
+echo "-- paths.txt --"
+check bash -c '
+    d="${TMP}/paths_ok"; mkdir -p "$d"
+    printf "%s\n" "# a comment" "HUMAN_DIR = /tmp/hg   # trailing" \
+        "bat_dir=\"/tmp/bats\"" "outdir=/tmp/out" > "$d/paths.txt"
+    cd "$d"
+    source "${HERE}/config/config.sh"
+    [[ "${HUMAN_GENOME_DIR}"   == /tmp/hg   ]] || { echo "ref  wrong: ${HUMAN_GENOME_DIR}";   exit 1; }
+    [[ "${BAT_ANNOTATION_DIR}" == /tmp/bats ]] || { echo "bat  wrong: ${BAT_ANNOTATION_DIR}"; exit 1; }
+    [[ "${WORKING_DIR}"        == /tmp/out  ]] || { echo "work wrong: ${WORKING_DIR}";        exit 1; }'
+# An unknown key is a typo, and a typo that is silently ignored becomes a run
+# against the wrong genome directory.
+check bash -c '
+    d="${TMP}/paths_bad"; mkdir -p "$d"; echo "hooman_dir=/tmp/x" > "$d/paths.txt"
+    cd "$d"
+    ! ( set -euo pipefail; source "${HERE}/config/config.sh" ) 2>/dev/null'
+check bash -c '
+    d="${TMP}/paths_example"; mkdir -p "$d"
+    cp "${HERE}/examples/paths.txt" "$d/paths.txt"; cd "$d"
+    set -euo pipefail; source "${HERE}/config/config.sh"'
+
+echo "-- results numbering is contiguous --"
+check python3 "${HERE}/tests/check_numbering.py" "${HERE}"
+
+echo "-- slurm scripts --"
+check python3 "${HERE}/tests/check_slurm.py" "${HERE}"
 
 echo "-- shell syntax --"
 check bash -n "${HERE}/scripts/run_pipeline.sh"

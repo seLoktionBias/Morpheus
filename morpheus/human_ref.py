@@ -254,7 +254,7 @@ def build(gene_list_path, cds_exon_table, longest_pc_tx, human_cds_fasta,
 
         # ---- collapse transcripts with an identical CDS ----------------
         # The key is the CDS sequence alone. Everything downstream - BLAST,
-        # codon alignment, HyPhy - is sequence-based, so two transcripts with
+        # codon alignment - is sequence-based, so two transcripts with
         # the same CDS are the same analysis. Keying on exon structure as well
         # would keep such a pair apart, and each copy would then consume a
         # separate query transcript in the one-to-one matching and be aligned

@@ -1,0 +1,11 @@
+# One HGNC gene symbol per line. Blank lines and #-comments are ignored.
+MX1
+MX2
+OAS1
+OAS2
+OAS3
+IFITM1
+IFITM2
+IFITM3
+RNASEL
+ZC3HAV1

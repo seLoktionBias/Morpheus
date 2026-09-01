@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 from . import (align, bat_loci, compare, copy_number, deliverables, family,
-               human_ref, hyphy, pairwise, screen, summary)
+               human_ref, pairwise, screen, summary)
 from .common import log, read_lines, species_from_dirname
 
 
@@ -119,13 +119,6 @@ def cmd_align(a) -> None:
                     only_passing=not a.include_failing)
 
 
-def cmd_hyphy(a) -> None:
-    hyphy.run_all(a.manifest, a.outdir, methods=a.methods,
-                  threads=a.hyphy_threads, timeout=a.timeout,
-                  only_passing=not a.include_failing, jobs=a.jobs,
-                  longest_only=a.longest_only)
-
-
 def cmd_summary(a) -> None:
     summary.build(a.results, a.outdir, policy=a.policy)
 
@@ -134,7 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="morpheus",
         description="Region-aware TOGA2 transcript recovery, one-to-one human/bat "
-                    "transcript assignment, gene copy number, and selection analysis.")
+                    "transcript assignment, and gene copy number.")
     sub = p.add_subparsers(dest="step", required=True)
 
     s = sub.add_parser("cds-table", help="flatten an Ensembl GTF into a CDS exon table (once)")
@@ -255,23 +248,6 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--include-failing", action="store_true")
     _add_common(s)
     s.set_defaults(func=cmd_align)
-
-    s = sub.add_parser("hyphy", help="aBSREL / BUSTED / MEME / FEL on every alignment")
-    s.add_argument("--manifest", required=True)
-    s.add_argument("--outdir", required=True)
-    s.add_argument("--methods", nargs="+", default=list(hyphy.METHODS),
-                   choices=list(hyphy.METHODS))
-    s.add_argument("--timeout", type=int, default=None, help="seconds per analysis")
-    s.add_argument("--include-failing", action="store_true")
-    s.add_argument("--jobs", type=int, default=1,
-                   help="analyses to run concurrently (HyPhy scales poorly "
-                        "inside one run, so widen this rather than --hyphy-threads)")
-    s.add_argument("--hyphy-threads", type=int, default=2,
-                   help="cores given to each individual analysis")
-    s.add_argument("--longest-only", action="store_true",
-                   help="analyse only the best-supported transcript per gene")
-    _add_common(s)
-    s.set_defaults(func=cmd_hyphy)
 
     s = sub.add_parser("summary", help="join every stage into SUMMARY.tsv / SUMMARY.md")
     s.add_argument("--results", required=True, help="the results/ directory")
