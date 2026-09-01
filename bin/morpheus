@@ -117,10 +117,14 @@ activate_environment() {
     local env_name="${MORPHEUS_ENV:-Morpheus}"
     local root="${MORPHEUS_CONDA_ROOT:-}"
     if [[ -z "${root}" ]]; then
+        # The environment directory is what matters, not which manager made
+        # it: a mamba or micromamba install need not ship `conda` at all.
         for candidate in "${CONDA_PREFIX_1:-}" "${CONDA_PREFIX:-}" \
+                         "${MAMBA_ROOT_PREFIX:-}" \
                          "${HOME}/miniforge3" "${HOME}/mambaforge" \
-                         "${HOME}/miniconda3" "${HOME}/anaconda3" \
-                         "${HOME}/Downloads/miniconda3" "/opt/miniconda3"; do
+                         "${HOME}/micromamba" "${HOME}/miniconda3" \
+                         "${HOME}/anaconda3" "${HOME}/Downloads/miniconda3" \
+                         "/opt/miniconda3"; do
             [[ -n "${candidate}" && -d "${candidate}/envs/${env_name}" ]] && { root="${candidate}"; break; }
         done
     fi

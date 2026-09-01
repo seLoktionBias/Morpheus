@@ -22,7 +22,7 @@
 set -euo pipefail
 source "${MORPHEUS_HOME:?set MORPHEUS_HOME}/slurm/_common.sh"
 
-python3 -m morpheus merge-search --outdir "${SEARCH_DIR}"
+morpheus_exec python3 -m morpheus merge-search --outdir "${SEARCH_DIR}"
 for step in screen assign compare copy-number deliverables align; do
     morpheus_run --only "${step}"
 done

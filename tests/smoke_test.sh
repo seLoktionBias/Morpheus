@@ -79,7 +79,7 @@ PY
 echo "-- CLI --"
 check python3 -m morpheus --help
 for step in cds-table human-reference families bat-search merge-search screen \
-            assign compare copy-number deliverables align summary; do
+            assign compare copy-number deliverables align merge-genes summary; do
     check python3 -m morpheus "${step}" --help
 done
 check bash "${HERE}/bin/morpheus" version
@@ -104,6 +104,10 @@ refuses "an unknown flag"         --not-a-flag --dry-run
 refuses "--gene with --gene_list" --gene A --gene_list /dev/null --dry-run
 refuses "a missing --path_file"   --path_file /nonexistent/paths.txt --dry-run
 refuses "a non-numeric --array_throttle" --mode slurm --array_throttle lots --dry-run
+refuses "--per_gene maybe"        --per_gene maybe --dry-run
+refuses "--env_mode conda-forge"  --env_mode conda-forge --dry-run
+refuses "--env_mode venv with no --venv_path" --env_mode venv --dry-run
+refuses "--time 2h"               --mode slurm --time 2h --dry-run
 
 echo "-- selection analysis is gone --"
 check bash -c '! grep -rniE "hyphy|absrel|busted" \
@@ -160,6 +164,27 @@ check python3 "${HERE}/tests/check_help.py" "${HERE}"
 
 echo "-- results numbering is contiguous --"
 check python3 "${HERE}/tests/check_numbering.py" "${HERE}"
+
+check python3 - <<'PY'
+# Per-gene runs are merged by column name. A gene whose table lacks a column
+# must get NA there, not the next column's value sliding into its place.
+import tempfile
+from pathlib import Path
+from morpheus.merge_genes import _concat
+from morpheus.common import read_tsv
+d = Path(tempfile.mkdtemp())
+(d / "a.tsv").write_text("gene\tx\ty\nMX1\t1\t2\n")
+(d / "b.tsv").write_text("y\tgene\tz\n9\tOAS1\t7\n")
+out = _concat([d / "a.tsv", d / "b.tsv"], d / "m.tsv")
+rows = read_tsv(out)
+assert [r["gene"] for r in rows] == ["MX1", "OAS1"], rows
+assert rows[0]["y"] == "2" and rows[1]["y"] == "9", "column order not honoured"
+assert rows[0]["z"] == "NA" and rows[1]["x"] == "NA", "missing column should be NA"
+assert _concat([d / "nope.tsv"], d / "empty.tsv") is None
+PY
+
+echo "-- slurm environment modes --"
+check bash "${HERE}/tests/check_env_modes.sh"
 
 echo "-- slurm scripts --"
 check python3 "${HERE}/tests/check_slurm.py" "${HERE}"

@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 from . import (align, bat_loci, compare, copy_number, deliverables, family,
-               human_ref, pairwise, screen, summary)
+               human_ref, merge_genes, pairwise, screen, summary)
 from .common import log, read_lines, species_from_dirname
 
 
@@ -117,6 +117,11 @@ def cmd_deliverables(a) -> None:
 def cmd_align(a) -> None:
     align.align_all(a.manifest, outdir=a.outdir, threads=a.threads,
                     only_passing=not a.include_failing)
+
+
+def cmd_merge_genes(a) -> None:
+    merge_genes.merge(a.genes_root, a.outdir, policies=a.policies,
+                      scopes=a.scopes)
 
 
 def cmd_summary(a) -> None:
@@ -248,6 +253,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--include-failing", action="store_true")
     _add_common(s)
     s.set_defaults(func=cmd_align)
+
+    s = sub.add_parser("merge-genes",
+                       help="concatenate per-gene runs into whole-list tables")
+    s.add_argument("--genes-root", required=True,
+                   help="directory holding one sub-directory per gene")
+    s.add_argument("--outdir", required=True)
+    s.add_argument("--policies", nargs="+", default=list(pairwise.POLICIES))
+    s.add_argument("--scopes", nargs="+", default=list(pairwise.SCOPES))
+    s.set_defaults(func=cmd_merge_genes)
 
     s = sub.add_parser("summary", help="join every stage into SUMMARY.tsv / SUMMARY.md")
     s.add_argument("--results", required=True, help="the results/ directory")

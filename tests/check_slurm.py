@@ -43,10 +43,17 @@ for p in scripts:
     if unknown:
         raise SystemExit(f"{p.name} runs unknown step(s): {sorted(unknown)}")
 
-# --mode slurm must submit every script, in order, and no others.
-submitted = re.findall(r'"\$\{S\}/(\S+?\.sbatch)"', pipeline)
-if submitted != names:
-    raise SystemExit(
-        f"--mode slurm submits {submitted}, but slurm/ holds {names}")
+# Every script --mode slurm submits must exist, and every script that exists
+# must be submitted by one of the two chains (--per_gene yes / no). A file
+# nobody submits is dead weight; a submit of a file that is gone is a broken run.
+submitted = set(re.findall(r'"\$\{S\}/(\S+?\.sbatch)"', pipeline))
+if not submitted:
+    raise SystemExit("--mode slurm submits nothing")
+ghost = submitted - set(names)
+if ghost:
+    raise SystemExit(f"--mode slurm submits scripts that do not exist: {sorted(ghost)}")
+orphan = set(names) - submitted
+if orphan:
+    raise SystemExit(f"slurm/ holds scripts nothing submits: {sorted(orphan)}")
 
 print("slurm consistent:", ", ".join(names))

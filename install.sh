@@ -118,12 +118,18 @@ env_bin_dir() {
     if [[ -n "${MORPHEUS_CONDA_ROOT:-}" && -d "${MORPHEUS_CONDA_ROOT}/envs/${ENV_NAME}/bin" ]]; then
         printf '%s' "${MORPHEUS_CONDA_ROOT}/envs/${ENV_NAME}/bin"; return 0
     fi
-    for mgr in mamba conda; do
+    for mgr in mamba conda micromamba; do
         have "$mgr" || continue
         base="$("$mgr" info --base 2>/dev/null)" || continue
         if [[ -d "${base}/envs/${ENV_NAME}/bin" ]]; then
             printf '%s' "${base}/envs/${ENV_NAME}/bin"; return 0
         fi
+    done
+    # No manager on PATH is not the same as no environment: look for it.
+    for base in "${MAMBA_ROOT_PREFIX:-}" "${HOME}/miniforge3" "${HOME}/mambaforge" \
+                "${HOME}/micromamba" "${HOME}/miniconda3" "${HOME}/anaconda3"; do
+        [[ -n "${base}" && -d "${base}/envs/${ENV_NAME}/bin" ]] \
+            && { printf '%s' "${base}/envs/${ENV_NAME}/bin"; return 0; }
     done
     return 1
 }

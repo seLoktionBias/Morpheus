@@ -29,7 +29,9 @@ GENE_ARG=""; GENE_LIST_ARG=""; MODE="local"; SEARCH="both"
 TREE_ARG=""; BAT_ARG=""; REF_ARG=""; OUT_ARG=""; PATH_FILE_ARG=""
 SKIP_PLOT=0; SLURM_MODULE_SET=0
 SLURM_PARTITION=""; SLURM_ACCOUNT=""; SLURM_MODULE_ARG=""; SLURM_EXTRA=""
-ARRAY_THROTTLE=""
+ARRAY_THROTTLE=""; SLURM_TIME=""
+ENV_MODE="inherit"; ENV_NAME=""; VENV_PATH=""
+PER_GENE="yes"; SINGLE_GENE=""
 
 usage() {
     cat <<'EOF'
@@ -63,8 +65,34 @@ How much to run:
                                        identity
                          both        - both, side by side (default)
   --skip_plot            produce no figures, only the tables
+  --per_gene yes|no      yes (default): each gene is run on its own -- one
+                           Slurm job per gene, or one gene at a time locally,
+                           so a long list cannot swamp the machine and one
+                           gene failing cannot spoil the rest. Results land in
+                           <output>/genes/<GENE>/ and are merged afterwards
+                           into <output>/combined/.
+                         no: one pass over the whole list, sharing the search
+                           across genes. Faster for many genes, because each
+                           query genome is read once instead of once per gene.
+
+Environment (how a job finds python3, blast, mafft and R):
+  --env_mode MODE        inherit | conda | mamba | venv   (default inherit)
+                           inherit     use the PATH of the submitting shell.
+                                       Activate the environment first, then
+                                       submit; --export=ALL carries it in.
+                           conda|mamba run the work through `<mgr> run -n NAME`,
+                                       which works in a non-interactive shell.
+                                       `conda activate` does not, and that is
+                                       the usual reason a batch job fails where
+                                       the same command worked interactively.
+                           venv        source --venv_path/bin/activate
+  --env_name NAME        environment for --env_mode conda|mamba (default Morpheus)
+  --venv_path DIR        virtualenv for --env_mode venv
 
 Slurm (only meaningful with --mode slurm):
+  --time SPEC            wall clock for every job: hours (12), HH:MM:SS or
+                           D-HH:MM:SS. Omit to keep each job's own default,
+                           which differs by job (see slurm/*.sbatch)
   --slurm_partition NAME queue to submit to, e.g. compute
   --slurm_account NAME   account to charge
   --slurm_module NAME    site module providing conda (default miniforge;
@@ -87,6 +115,7 @@ Steps: cds-table human-reference families bat-search screen assign compare
 
 Settings (export before running): THREADS, MIN_SPECIES_FRACTION,
        MIN_ASSIGNMENT_SCORE, MIN_ASSIGNMENT_PIDENT, PLOT_MIN_SPECIES
+       (PLOT_MIN_SPECIES defaults to MIN_SPECIES_FRACTION of the species searched)
 
 EXAMPLES
 
@@ -167,6 +196,17 @@ while [[ $# -gt 0 ]]; do
         --path_file|--path-file)
                        PATH_FILE_ARG="${2:?--path_file needs a file}"; shift 2 ;;
         --skip_plot|--skip-plot) SKIP_PLOT=1; shift ;;
+        --per_gene|--per-gene)
+                       PER_GENE="${2:?--per_gene needs yes or no}"; shift 2 ;;
+        # internal: the per-gene driver re-enters this script for one gene
+        --_single_gene) SINGLE_GENE="${2:?}"; PER_GENE="no"; shift 2 ;;
+        --env_mode|--env-mode)
+                       ENV_MODE="${2:?--env_mode needs inherit, conda, mamba or venv}"; shift 2 ;;
+        --env_name|--env-name)
+                       ENV_NAME="${2:?--env_name needs a name}"; shift 2 ;;
+        --venv_path|--venv-path)
+                       VENV_PATH="${2:?--venv_path needs a directory}"; shift 2 ;;
+        --time)        SLURM_TIME="${2:?--time needs hours, HH:MM:SS or D-HH:MM:SS}"; shift 2 ;;
         --slurm_partition|--slurm-partition)
                        SLURM_PARTITION="${2:?--slurm_partition needs a name}"; shift 2 ;;
         --slurm_account|--slurm-account)
@@ -206,11 +246,42 @@ if [[ "${MODE}" != "slurm" ]]; then
     warn_unused --slurm_account   "${SLURM_ACCOUNT}"
     warn_unused --array_throttle  "${ARRAY_THROTTLE}"
     warn_unused --slurm_extra     "${SLURM_EXTRA}"
+    warn_unused --time            "${SLURM_TIME}"
     [[ ${SLURM_MODULE_SET} -eq 1 ]] && \
         echo "WARNING: --slurm_module is ignored without --mode slurm" >&2
 fi
 [[ -n "${ARRAY_THROTTLE}" && ! "${ARRAY_THROTTLE}" =~ ^[0-9]+$ ]] && \
     die "--array_throttle must be a number, not '${ARRAY_THROTTLE}'"
+
+case "${PER_GENE}" in yes|no) ;;
+    *) die "--per_gene must be 'yes' or 'no', not '${PER_GENE}'" ;;
+esac
+case "${ENV_MODE}" in
+    inherit|conda|mamba|venv) ;;
+    *) die "--env_mode must be inherit, conda, mamba or venv, not '${ENV_MODE}'" ;;
+esac
+[[ "${ENV_MODE}" == "venv" && -z "${VENV_PATH}" ]] && die "--env_mode venv needs --venv_path"
+[[ -n "${VENV_PATH}" && ! -f "${VENV_PATH}/bin/activate" ]] && \
+    die "no activation script at ${VENV_PATH}/bin/activate"
+[[ -n "${ENV_NAME}" && "${ENV_MODE}" == "inherit" ]] && \
+    echo "WARNING: --env_name is ignored with --env_mode inherit" >&2
+: "${ENV_NAME:=${MORPHEUS_ENV:-Morpheus}}"
+
+# Accept plain hours (Pensieve's spelling), HH:MM:SS, or D-HH:MM:SS.
+normalise_time() {
+    local spec="$1"
+    if [[ "${spec}" =~ ^[0-9]+$ ]]; then
+        local d=$(( spec / 24 )) h=$(( spec % 24 ))
+        (( d > 0 )) && printf '%d-%02d:00:00' "${d}" "${h}" || printf '%02d:00:00' "${h}"
+        return 0
+    fi
+    [[ "${spec}" =~ ^([0-9]+-)?[0-9]{1,2}:[0-9]{2}:[0-9]{2}$ ]] || return 1
+    printf '%s' "${spec}"
+}
+if [[ -n "${SLURM_TIME}" ]]; then
+    SLURM_TIME="$(normalise_time "${SLURM_TIME}")" \
+        || die "--time must be hours (12), HH:MM:SS or D-HH:MM:SS"
+fi
 
 for s in ${ONLY_STEPS[@]+"${ONLY_STEPS[@]}"} ${FROM:+"${FROM}"}; do
     ok=0; for k in "${ALL_STEPS[@]}"; do [[ "$s" == "$k" ]] && ok=1; done
@@ -236,6 +307,7 @@ fi
 [[ -n "${TREE_ARG}" ]] && export SPECIES_TREE="${TREE_ARG}"
 [[ -n "${GENE_LIST_ARG}" ]] && export GENE_LIST="${GENE_LIST_ARG}"
 
+CACHE_DIR_FROM_CALLER="${CACHE_DIR:-}"
 source "${MORPHEUS_HOME}/config/config.sh"
 
 # --gene: a one-line gene list, written where the results live so a later
@@ -301,6 +373,143 @@ banner() {
 }
 
 # ---------------------------------------------------------------------------
+# --per_gene yes: each gene gets its own complete, self-contained results tree.
+#
+# Isolation is the point. Nothing is shared but the flattened GTF cache, which
+# is read-only after the reference job writes it, so concurrent gene jobs cannot
+# corrupt a common table and nothing needs locking. One gene failing leaves
+# every other gene's results intact and re-runnable on its own.
+#
+# The cost is real and worth stating: each gene job reads every query genome's
+# annotation, so N genes read them N times. --per_gene no runs one pass over the
+# whole list instead, reading each genome once.
+# ---------------------------------------------------------------------------
+GENES_ROOT="${WORKING_DIR}/genes"
+COMBINED_DIR="${WORKING_DIR}/combined"
+# One flattened-GTF cache for every gene: it is the single most expensive thing
+# in the pipeline and it does not depend on which gene is being analysed. It
+# sits beside genes/ and combined/, not inside any one gene's results.
+if [[ "${PER_GENE}" == "yes" ]]; then
+    export CACHE_DIR="${CACHE_DIR_FROM_CALLER:-${WORKING_DIR}/cache}"
+fi
+
+read_genes() { grep -vE '^[[:space:]]*(#|$)' "${GENE_LIST}" | tr -d '\r' | awk '{print $1}'; }
+
+if [[ "${PER_GENE}" == "yes" ]]; then
+    [[ -s "${GENE_LIST}" ]] || die "missing gene list: ${GENE_LIST} (use --gene or --gene_list)"
+    # A while-read loop, not mapfile: mapfile is bash 4+, and macOS still
+    # ships bash 3.2 as /bin/bash. Local runs have to work there.
+    GENES=()
+    while IFS= read -r _g; do [[ -n "${_g}" ]] && GENES+=("${_g}"); done < <(read_genes)
+    [[ ${#GENES[@]} -gt 0 ]] || die "no gene symbols in ${GENE_LIST}"
+
+    # Flags every per-gene invocation inherits. Paths are already resolved, so a
+    # gene job never re-reads paths.txt from a directory it is not standing in.
+    declare -a PASS=(--search "${SEARCH}"
+                     --bat_dir "${BAT_ANNOTATION_DIR}" --ref_dir "${HUMAN_GENOME_DIR}"
+                     --tree "${SPECIES_TREE}")
+    [[ ${SKIP_PLOT} -eq 1 ]] && PASS+=(--skip_plot)
+    [[ -n "${OVERWRITE}" ]] && PASS+=(--overwrite)
+    [[ -n "${FROM}" ]] && PASS+=(--from "${FROM}")
+    for s in ${ONLY_STEPS[@]+"${ONLY_STEPS[@]}"}; do PASS+=(--only "$s"); done
+    [[ ${#SPECIES[@]-0} -gt 0 ]] && PASS+=(--species "${SPECIES[@]}")
+
+    if [[ "${MODE}" == "slurm" ]]; then
+        [[ ${DRY_RUN} -eq 1 ]] || command -v sbatch >/dev/null 2>&1 \
+            || die "--mode slurm, but 'sbatch' is not on PATH"
+        mkdir -p "${WORKING_DIR}/logs" "${GENES_ROOT}"
+        printf '%s\n' "${GENES[@]}" > "${GENES_ROOT}/.gene_order.txt"
+
+        SB=()
+        [[ -n "${SLURM_PARTITION}" ]] && SB+=(--partition="${SLURM_PARTITION}")
+        [[ -n "${SLURM_ACCOUNT}"   ]] && SB+=(--account="${SLURM_ACCOUNT}")
+        [[ -n "${SLURM_TIME}"      ]] && SB+=(--time="${SLURM_TIME}")
+        # shellcheck disable=SC2206
+        [[ -n "${SLURM_EXTRA}"     ]] && SB+=(${SLURM_EXTRA})
+        ARRAY_SPEC="1-${#GENES[@]}"
+        [[ -n "${ARRAY_THROTTLE}" ]] && ARRAY_SPEC="${ARRAY_SPEC}%${ARRAY_THROTTLE}"
+
+        EXPORTS="ALL,MORPHEUS_HOME=${MORPHEUS_HOME},MORPHEUS_PROJECT_DIR=${WORKING_DIR}"
+        EXPORTS+=",GENE_LIST=${GENE_LIST},SPECIES_TREE=${SPECIES_TREE}"
+        EXPORTS+=",BAT_ANNOTATION_DIR=${BAT_ANNOTATION_DIR},HUMAN_GENOME_DIR=${HUMAN_GENOME_DIR}"
+        EXPORTS+=",WORKING_DIR=${WORKING_DIR},CACHE_DIR=${CACHE_DIR}"
+        EXPORTS+=",MORPHEUS_SEARCH=${SEARCH},MORPHEUS_SKIP_PLOT=${SKIP_PLOT}"
+        EXPORTS+=",MORPHEUS_ENV_MODE=${ENV_MODE},MORPHEUS_ENV_NAME=${ENV_NAME}"
+        [[ -n "${VENV_PATH}" ]] && EXPORTS+=",MORPHEUS_VENV_PATH=${VENV_PATH}"
+        [[ ${SLURM_MODULE_SET} -eq 1 ]] && EXPORTS+=",MORPHEUS_MODULE=${SLURM_MODULE_ARG}"
+
+        if [[ ${DRY_RUN} -eq 1 ]]; then
+            cat <<EOF
+would submit ${#GENES[@]} genes, one job each${SB[0]+, with ${SB[*]}}:
+  00_reference.sbatch          flatten the GTF once (shared cache)
+  01_gene_array.sbatch         --array=${ARRAY_SPEC}   one task per gene
+  04_collect.sbatch            merge, figures, summary
+genes: ${GENES[*]}
+with --export=${EXPORTS}
+EOF
+            exit 0
+        fi
+
+        S="${MORPHEUS_HOME}/slurm"
+        submit() { sbatch --parsable --export="${EXPORTS}" ${SB[@]+"${SB[@]}"} "$@"; }
+        ref=$(submit "${S}/00_reference.sbatch")
+        arr=$(submit --dependency=afterok:"${ref}" --array="${ARRAY_SPEC}" \
+                     "${S}/01_gene_array.sbatch")
+        # afterany, not afterok: one gene failing must not stop the other
+        # twenty being merged and plotted. merge-genes names any gene that
+        # produced nothing.
+        coll=$(submit --dependency=afterany:"${arr}" "${S}/04_collect.sbatch")
+        cat <<EOF
+
+Submitted ${#GENES[@]} genes, one job each.
+
+  ${ref}   reference   flatten the GTF once, into ${CACHE_DIR}
+  ${arr}   genes       array ${ARRAY_SPEC}, one task per gene
+  ${coll}   collect     merge, figures, summary (runs even if a gene fails)
+
+  squeue -j ${ref},${arr},${coll}
+  logs        ${WORKING_DIR}/logs/
+  per gene    ${GENES_ROOT}/<GENE>/results/
+  combined    ${COMBINED_DIR}/
+EOF
+        exit 0
+    fi
+
+    # ---- local: one gene at a time -----------------------------------------
+    # Sequential on purpose. A long gene list run in parallel on a workstation
+    # is how you end up with a machine you cannot type on.
+    mkdir -p "${GENES_ROOT}" "${WORKING_DIR}/logs"
+    echo "Running ${#GENES[@]} genes one at a time. Each gets its own results tree."
+    failed=()
+    for i in "${!GENES[@]}"; do
+        g="${GENES[$i]}"
+        printf '\n===== [%d/%d] %s =====\n' "$((i + 1))" "${#GENES[@]}" "${g}"
+        if bash "${BASH_SOURCE[0]}" --_single_gene "${g}" --gene "${g}" \
+                --output "${GENES_ROOT}/${g}" "${PASS[@]}"; then
+            :
+        else
+            echo "WARNING: ${g} failed; continuing with the rest" >&2
+            failed+=("${g}")
+        fi
+    done
+
+    echo
+    if [[ ${#failed[@]} -gt 0 ]]; then
+        echo "${#failed[@]} of ${#GENES[@]} genes failed: ${failed[*]}" >&2
+        echo "Re-run one with: morpheus run --gene <GENE> --output ${GENES_ROOT}/<GENE>" >&2
+    fi
+
+    MORPHEUS_SKIP_PLOT="${SKIP_PLOT}" \
+        bash "${MORPHEUS_HOME}/scripts/merge_and_plot.sh" "${GENES_ROOT}" "${COMBINED_DIR}"
+
+    echo
+    echo "Per gene   ${GENES_ROOT}/<GENE>/results/"
+    echo "Combined   ${COMBINED_DIR}/"
+    [[ ${#failed[@]} -eq 0 ]] || exit 1
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
 # --mode slurm: submit the whole chain and return. Every resolved setting is
 # handed to the jobs, so the batch run sees exactly what was resolved here
 # rather than re-reading paths.txt from a different working directory.
@@ -320,6 +529,7 @@ if [[ "${MODE}" == "slurm" ]]; then
     SB=()
     [[ -n "${SLURM_PARTITION}" ]] && SB+=(--partition="${SLURM_PARTITION}")
     [[ -n "${SLURM_ACCOUNT}"   ]] && SB+=(--account="${SLURM_ACCOUNT}")
+    [[ -n "${SLURM_TIME}"      ]] && SB+=(--time="${SLURM_TIME}")
     # shellcheck disable=SC2206
     [[ -n "${SLURM_EXTRA}"     ]] && SB+=(${SLURM_EXTRA})
     ARRAY_SPEC="1-${n_genomes}"
@@ -327,6 +537,8 @@ if [[ "${MODE}" == "slurm" ]]; then
 
     EXPORTS="ALL,MORPHEUS_HOME=${MORPHEUS_HOME},MORPHEUS_PROJECT_DIR=${WORKING_DIR}"
     [[ ${SLURM_MODULE_SET} -eq 1 ]] && EXPORTS+=",MORPHEUS_MODULE=${SLURM_MODULE_ARG}"
+    EXPORTS+=",MORPHEUS_ENV_MODE=${ENV_MODE},MORPHEUS_ENV_NAME=${ENV_NAME}"
+    [[ -n "${VENV_PATH}" ]] && EXPORTS+=",MORPHEUS_VENV_PATH=${VENV_PATH}"
     EXPORTS+=",GENE_LIST=${GENE_LIST},SPECIES_TREE=${SPECIES_TREE}"
     EXPORTS+=",BAT_ANNOTATION_DIR=${BAT_ANNOTATION_DIR},HUMAN_GENOME_DIR=${HUMAN_GENOME_DIR}"
     EXPORTS+=",WORKING_DIR=${WORKING_DIR},MORPHEUS_SEARCH=${SEARCH}"
@@ -336,9 +548,9 @@ if [[ "${MODE}" == "slurm" ]]; then
         cat <<EOF
 would submit${SB[0]+, with ${SB[*]}}:
   00_reference.sbatch
-  01_bat_search_array.sbatch   --array=${ARRAY_SPEC}
-  02_after_search.sbatch
-  03_collect.sbatch
+  02_genome_array.sbatch       --array=${ARRAY_SPEC}
+  03_after_search.sbatch
+  04_collect.sbatch
 with --export=${EXPORTS}
 EOF
         exit 0
@@ -349,9 +561,9 @@ EOF
     submit() { sbatch --parsable --export="${EXPORTS}" ${SB[@]+"${SB[@]}"} "$@"; }
     ref=$(submit "${S}/00_reference.sbatch")
     arr=$(submit --dependency=afterok:"${ref}" --array="${ARRAY_SPEC}" \
-                 "${S}/01_bat_search_array.sbatch")
-    post=$(submit --dependency=afterok:"${arr}" "${S}/02_after_search.sbatch")
-    coll=$(submit --dependency=afterok:"${post}" "${S}/03_collect.sbatch")
+                 "${S}/02_genome_array.sbatch")
+    post=$(submit --dependency=afterok:"${arr}" "${S}/03_after_search.sbatch")
+    coll=$(submit --dependency=afterok:"${post}" "${S}/04_collect.sbatch")
     cat <<EOF
 
 Submitted the whole chain; nothing else to do.
@@ -418,12 +630,15 @@ Run 'morpheus env' to see what was resolved." >&2
 fi
 
 n_species=$(find "${BAT_ANNOTATION_DIR}" -maxdepth 1 -mindepth 1 -type d ! -name '.*' | wc -l | tr -d ' ')
+[[ ${#SPECIES[@]-0} -gt 0 ]] && n_species=${#SPECIES[@]}
+PLOT_MIN_SPECIES="$(plot_min_species_for "${n_species}")"
 cat <<EOF
 Morpheus $(cat "${MORPHEUS_HOME}/VERSION" 2>/dev/null || echo "")
   genes          $(grep -cve '^\s*$' "${GENE_LIST}") from ${GENE_LIST}
   bat genomes    ${n_species} in ${BAT_ANNOTATION_DIR}
   human GTF      $(basename "${HUMAN_GTF}")
   search         ${SEARCH}  (scopes: ${SCOPES} | rankings: ${POLICIES})
+  min species    ${MIN_SPECIES_FRACTION} of ${n_species} = ${PLOT_MIN_SPECIES}
   figures        $( [[ ${SKIP_PLOT} -eq 1 ]] && echo "skipped (--skip_plot)" || echo "on" )
   results        ${RESULTS_DIR}
   threads        ${THREADS}
@@ -580,6 +795,17 @@ fi
 # ---------------------------------------------------------------------------
 # 10. plots
 # ---------------------------------------------------------------------------
+PLOTS_FAILED=0
+# Figures are secondary to the tables. A threshold set too high for this
+# particular subset, or a missing R package, must not turn a run that produced
+# every table into a failed run -- especially under --per_gene, where the driver
+# would then report the gene itself as failed.
+draw() {
+    if ! Rscript "$@"; then
+        echo "WARNING: figure failed: Rscript $*" >&2
+        PLOTS_FAILED=$((PLOTS_FAILED + 1))
+    fi
+}
 if should_run plots; then
     banner "plots"
     mkdir -p "${PLOTS_DIR}"
@@ -588,7 +814,7 @@ if should_run plots; then
     # figures. Copy number does not depend on it and stays at the top level.
     for policy in ${POLICIES}; do
         for scope in ${STATUS_SCOPES}; do
-            Rscript "${R_DIR}/plot_transcript_status.R" \
+            draw "${R_DIR}/plot_transcript_status.R" \
                 --status "${GENES_DIR}/${policy}/transcript_status_${scope}.tsv" \
                 --tree "${SPECIES_TREE}" --outdir "${PLOTS_DIR}/${policy}" \
                 --min-species "${PLOT_MIN_SPECIES}" \
@@ -596,17 +822,18 @@ if should_run plots; then
                 2>&1 | tee -a "${LOG_DIR}/10_plot_status.log"
         done
         if [[ ${DO_COMPARE} -eq 1 ]]; then
-            Rscript "${R_DIR}/plot_scope_comparison.R" \
+            draw "${R_DIR}/plot_scope_comparison.R" \
                 --comparison "${ASSIGN_DIR}/scope_comparison__${policy}.tsv" \
                 --tree "${SPECIES_TREE}" --outdir "${PLOTS_DIR}/${policy}" \
                 --min-species "${PLOT_MIN_SPECIES}" \
                 2>&1 | tee -a "${LOG_DIR}/10b_plot_scope.log"
         fi
     done
-    Rscript "${R_DIR}/plot_copy_number.R" \
+    draw "${R_DIR}/plot_copy_number.R" \
         --matrix "${COPY_DIR}/copy_number_matrix.tsv" \
         --tree "${SPECIES_TREE}" --outdir "${PLOTS_DIR}" \
         2>&1 | tee "${LOG_DIR}/11_plot_copy_number.log"
+    [[ ${PLOTS_FAILED} -eq 0 ]] || echo "WARNING: ${PLOTS_FAILED} figure(s) failed; every table was still written" >&2
 fi
 
 # ---------------------------------------------------------------------------

@@ -46,6 +46,9 @@ parser = re.search(r"while \[\[ \$# -gt 0 \]\]; do(.*?)\ndone",
 known = set(re.findall(r"(--[\w-]+)\)", parser))
 known |= set(re.findall(r"(--[\w-]+)\|", parser))
 known.add("-h")
+# Flags spelled --_something are internal plumbing (the per-gene driver
+# re-enters this script for one gene) and are deliberately not user-facing.
+known = {f for f in known if not f.startswith("--_")}
 if len(known) < 15:
     raise SystemExit(f"only found {len(known)} flags in the parser; parsing broke")
 
@@ -53,7 +56,7 @@ if len(known) < 15:
 mentioned = set(re.findall(r"(?<![\w-])(--[a-z][\w-]*)", top + run_help))
 # sbatch's own flags, named in the text as things to hand to --slurm_extra or
 # as the per-job defaults living in the sbatch files. Not Morpheus flags.
-SBATCH_FLAGS = {"--mem", "--time", "--qos", "--partition", "--account"}
+SBATCH_FLAGS = {"--mem", "--qos", "--partition", "--account", "--export"}
 unknown = mentioned - known - SBATCH_FLAGS
 if unknown:
     raise SystemExit(f"help mentions flags the parser rejects: {sorted(unknown)}")

@@ -36,6 +36,24 @@ explicit rather than convention-driven.
 - **`--search region|similarity|both`** selects the scope and ranking together;
   `region` and `similarity` each run about half the work of `both`.
 - **`--skip_plot`** skips every figure, and drops R from the requirements.
+- **`--per_gene yes|no`, default `yes`.** Each gene now runs on its own: one
+  Slurm job per gene, or one gene at a time locally so a long list cannot swamp
+  a workstation. Each gene writes a complete results tree under
+  `<output>/genes/<GENE>/`, and `morpheus merge-genes` concatenates them into
+  `<output>/combined/` for the whole-list tables and figures. Nothing is shared
+  but the flattened GTF cache, which is read-only after the reference job, so
+  concurrent gene jobs cannot corrupt a common table and one gene failing leaves
+  the rest intact. `--per_gene no` keeps the previous whole-list behaviour,
+  which reads each query genome once rather than once per gene.
+- **`morpheus merge-genes`** and `scripts/merge_and_plot.sh`, shared by the local
+  and Slurm paths so the merge happens one way, not two. Concatenation is by
+  column name: a gene missing a column gets `NA` there rather than the next
+  column's value sliding into its place.
+- **`--env_mode inherit|conda|mamba|venv`, `--env_name` and `--venv_path`**,
+  matching Pensieve's model, so a job can resolve its own environment without
+  relying on `conda activate` working non-interactively.
+- **`--time SPEC`** — hours, `HH:MM:SS` or `D-HH:MM:SS` — applied to all four
+  jobs. Per-job defaults stay in the sbatch files, since the jobs differ.
 - **Slurm site options**: `--slurm_partition`, `--slurm_account`,
   `--slurm_module`, `--array_throttle` and `--slurm_extra`. There was previously
   no way to name a queue, so `--mode slurm` could not be used at all on a cluster
@@ -63,9 +81,53 @@ explicit rather than convention-driven.
   shared preamble, valid job names and log paths, no Slurm job asking for a step
   the pipeline does not have, and `--mode slurm` submitting exactly the scripts
   that exist), launcher generation, help/parser agreement, and flag rejection.
-  Smoke test now 52 checks.
+  Smoke test now 60 checks, including nine on Slurm environment failure modes
+  and the per-gene merge's column handling.
 
 ### Fixed
+
+- **A mamba-only install was reported as "no conda installation found".**
+  `activate_env` searched for a `conda` *binary* to locate the environment. A
+  `--backend=mamba` install has no reason to provide one and micromamba never
+  does. It now looks for the environment directory itself, and knows about
+  `MAMBA_ROOT_PREFIX` and `~/micromamba`.
+- **`PLOT_MIN_SPECIES` was a fixed 50** while `MIN_SPECIES_FRACTION` was a
+  fraction, so any run over fewer than 50 genomes produced an empty transcript
+  status figure — or, with the fix below not yet in place, a failed run. It is
+  now derived from `MIN_SPECIES_FRACTION` of the species actually searched
+  (rounded up, minimum 1), matching the threshold that already gated
+  `gene_files_selected`. At the full 103 genomes that is 52, so existing results
+  are unaffected; setting `PLOT_MIN_SPECIES` explicitly still overrides it.
+- The merge step counted species with a `find` that also matched
+  `06_plots/transcript_status_<scope>_matrix.tsv` — a plotting artefact with
+  species as rows and transcripts as columns. It reported 104 species for a
+  4-species run, and would have invented a scope named `<scope>_matrix`.
+- **A figure that would not draw failed the whole run.** Under `--per_gene` that
+  surfaced as the *gene* having failed, when in fact every table was written and
+  only a threshold (`PLOT_MIN_SPECIES`) was too high for the species subset.
+  Figure failures now warn and are counted; the run still succeeds.
+- `mapfile` is bash 4+, and macOS ships bash 3.2 — local runs died immediately
+  on `mapfile: command not found`. Replaced with portable while-read loops.
+- A cleanup `trap` in the environment-mode test could overwrite the tests' own
+  exit status, so a fully passing run could report a failure.
+
+- **Slurm jobs failed with no usable error.** `slurm/_common.sh` ran
+  `module load miniforge` and `conda activate Morpheus`, both with `|| true`,
+  and both are wrong by default: sites name modules differently, and
+  `conda activate` does nothing useful in a non-interactive batch shell. The
+  environment half-activated, the job died several steps later complaining about
+  a missing file, and the real cause appeared nowhere — surfacing as
+  `DependencyNeverSatisfied` on every downstream job in the chain.
+
+  Nothing is guessed now. `--env_mode inherit` is the default and takes the
+  submitting shell's PATH; `conda`/`mamba` run the work through
+  `<manager> run -n`, which works without an interactive shell; `--slurm_module`
+  is opt-in and errors if `module` is unavailable. Every job verifies its tools
+  before doing anything and, if they are missing, fails at the top of the log
+  naming them and the flags to fix it.
+- `conda run` buffers output until the process exits, which would leave a
+  twelve-hour job's log empty while it ran. `--no-capture-output` is added when
+  the manager supports it, with a note when it does not.
 
 - `morpheus --help` printed `####` and `set -euo pipefail` at the user: it was
   built with `sed -n '3,18p'` over the script's own comment block, and that line

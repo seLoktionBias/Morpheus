@@ -115,7 +115,7 @@ ml miniforge && bash install.sh
 ```
 
 `make help` lists the same operations as Makefile targets. `make test` runs the
-smoke test (52 checks: the optimal matcher against brute force, the codon table,
+smoke test (60 checks: the optimal matcher against brute force, the codon table,
 ORF reporting, Newick pruning, every CLI subcommand, flag rejection, `paths.txt`
 parsing, help/parser agreement, contiguous directory numbering, Slurm script consistency, all shell
 syntax, and every figure script against synthetic input).
@@ -162,16 +162,21 @@ morpheus run --gene_list gene_list.txt --search region --skip_plot
 | `--output DIR` | working/output directory (default: the current directory) |
 | `--path_file FILE` | supply `--bat_dir`, `--ref_dir` and `--output` from a file instead |
 | `--skip_plot` | write no figures, only tables — saves time and disk |
+| `--per_gene yes\|no` | `yes` (default): one Slurm job per gene, or one gene at a time locally. `no`: one pass over the whole list |
 | `--from STEP` | resume from a step |
 | `--only STEP` | run one step (repeatable) |
 | `--species NAME...` | restrict the search to these `Genus_species` |
 | `--overwrite` | redo per-species searches already on disk |
 | `--dry-run` | print the plan and stop; works in `--mode slurm` too |
+| `--env_mode MODE` | `inherit` (default), `conda`, `mamba` or `venv` — see [Running on Slurm](#running-on-slurm) |
+| `--env_name NAME` | environment for `--env_mode conda\|mamba` (default `Morpheus`) |
+| `--venv_path DIR` | virtualenv for `--env_mode venv` |
 
 Site options for `--mode slurm` (ignored, with a warning, in `local` mode):
 
 | Flag | Meaning |
 |---|---|
+| `--time SPEC` | wall clock for every job: hours (`12`), `HH:MM:SS`, or `D-HH:MM:SS`. Omit to keep each job's own default |
 | `--slurm_partition NAME` | queue to submit to, e.g. `compute` |
 | `--slurm_account NAME` | account to charge |
 | `--slurm_module NAME` | site module providing conda (default `miniforge`; `""` if conda is already on PATH) |
@@ -545,6 +550,35 @@ the alignment. Every edit is recorded in `alignment_preparation.tsv`.
 
 ## Output layout
 
+With `--per_gene yes` (the default) each gene gets its own complete results tree,
+and they are merged afterwards:
+
+```
+<output>/
+├── cache/                       flattened Ensembl GTF, written once, shared
+├── logs/
+├── genes/
+│   ├── MX1/results/             a full 01..06 tree, exactly as below
+│   └── OAS1/results/
+└── combined/                    every gene's tables concatenated
+    ├── copy_number_matrix.tsv
+    ├── transcript_status_<scope>__<policy>.tsv
+    ├── transcript_assignments_<scope>__<policy>.tsv
+    └── plots/                   the whole-list figures
+```
+
+Isolation is the point: nothing is shared but the read-only GTF cache, so
+concurrent gene jobs cannot corrupt a common table and one gene failing leaves
+every other gene's results intact and re-runnable on its own:
+
+```bash
+morpheus run --gene OAS1 --output <output>/genes/OAS1
+```
+
+The cost is real: each gene job reads every query genome's annotation, so *N*
+genes read them *N* times. `--per_gene no` runs one pass over the whole list
+instead, reading each genome once and writing a single tree:
+
 ```
 results/
 ├── cache/                       flattened Ensembl CDS exon table (reusable)
@@ -634,11 +668,26 @@ Tunables: `--intron-mode log|sqrt|linear|none`, `--intron-factor`,
 ## Running on Slurm
 
 ```bash
-morpheus run --gene_list gene_list.txt --path_file paths.txt --mode slurm
+morpheus run --gene_list gene_list.txt --path_file paths.txt --mode slurm \
+    --slurm_partition compute
 ```
 
-That is the whole thing. It resolves the inputs, counts the genomes, and submits
-four jobs wired together with dependencies:
+That is the whole thing. It resolves the inputs, counts the genes, and submits a
+dependent chain. **One job per gene**, by default:
+
+```
+morpheus_reference   flatten the GTF once, into the shared cache   32G  6h
+morpheus_gene        array 1-N, one task per gene                  16G  12h
+morpheus_collect     merge every gene, draw the figures            16G  4h
+```
+
+The collect job depends on the array with `afterany`, not `afterok`: one gene
+failing must not stop the other twenty being merged and plotted. `merge-genes`
+names any gene that produced nothing, so a partial result is never mistaken for
+a complete one.
+
+`--per_gene no` submits the other shape instead — one pass over the whole list,
+parallelised over *genomes* rather than genes:
 
 ```
 morpheus_reference     steps 1-3          32G   6h
@@ -647,7 +696,7 @@ morpheus_post_search   screen -> align    32G   12h
 morpheus_collect       figures, summary   16G   4h
 ```
 
-It prints the four job IDs and a ready-made `squeue -j` line. Logs land in
+It prints the job IDs and a ready-made `squeue -j` line. Logs land in
 `<output>/logs/`. `--dry-run` shows what would be submitted without submitting
 it, and works on a machine with no `sbatch` at all — useful for checking a
 command on your laptop before running it on the cluster.
@@ -679,6 +728,54 @@ loop over genes. The reference build, the paralog screen and the per-genome
 search are shared across every gene in the list, so submitting per gene would
 redo the entire 103-genome search once per gene. Pass the list and let the array
 parallelise over genomes.
+
+### Telling a job where its tools are
+
+This is where cluster runs actually fail, so Morpheus does not guess. `--env_mode`
+follows the same three options Pensieve uses:
+
+| `--env_mode` | What the job does | Use it when |
+|---|---|---|
+| `inherit` *(default)* | nothing — uses the PATH of the shell that submitted the job, carried in by `--export=ALL` | you activate the environment before submitting. Simplest, and what most people want |
+| `conda` / `mamba` | runs the work through `<manager> run -n <name>` | the job needs to activate for itself. **`conda activate` does not work in a non-interactive batch shell** — `<manager> run` does, which is the whole reason this mode exists |
+| `venv` | sources `--venv_path/bin/activate` | you installed with `--backend=venv` |
+
+```bash
+# the usual way: activate, then submit
+ml miniforge && mamba activate Morpheus
+morpheus run --gene_list gene_list.txt --path_file paths.txt --mode slurm
+
+# or let each job resolve the environment itself
+morpheus run --gene_list gene_list.txt --path_file paths.txt --mode slurm \
+    --env_mode mamba --env_name Morpheus --slurm_module miniforge
+```
+
+Whichever you pick, every job checks up front that `python3`, `mafft`, `blastx`
+and `Rscript` are actually reachable, and **fails immediately, naming what is
+missing and what to pass instead**:
+
+```
+[Morpheus] ERROR: not on PATH in this job: mafft blastx Rscript
+  env_mode  inherit
+  env_name  Morpheus
+  module    <none requested>
+
+  Either activate the environment before submitting and keep the
+  default --env_mode inherit, or submit with:
+    --env_mode mamba --env_name Morpheus --slurm_module <your conda module>
+```
+
+That check exists because of a specific failure: an environment that
+half-activates lets the job run on and die several steps later complaining about
+a missing file, with the real cause nowhere in the log. In a dependent chain
+that shows up as `DependencyNeverSatisfied` on every downstream job and no
+explanation anywhere. **When a chain stalls like that, read the `.err` of the
+*first* job — the others never ran.**
+
+```bash
+squeue -u $USER                  # which are held
+cat logs/morpheus_reference_*.err
+```
 
 ### Getting `morpheus` on PATH in a job
 
@@ -748,7 +845,7 @@ Override by exporting before running, or edit `config/config.sh`.
 |---|---|---|
 | `THREADS` | all cores | BLAST/MAFFT threads |
 | `MIN_SPECIES_FRACTION` | 0.5 | share of query species needed to enter `gene_files_selected` |
-| `PLOT_MIN_SPECIES` | 50 | species needed for a transcript column to be plotted |
+| `PLOT_MIN_SPECIES` | `MIN_SPECIES_FRACTION` of the species searched | species needed for a transcript column to be plotted. Derived, not fixed: a hard 50 produced an empty figure whenever fewer than 50 genomes were involved |
 | `MIN_ASSIGNMENT_SCORE` | 0.30 | below this a human transcript stays unassigned |
 | `MIN_ASSIGNMENT_PIDENT` | 40 | protein identity floor for any assignment |
 | `POLICIES` | both | ranking policies to build (normally set by `--search`) |

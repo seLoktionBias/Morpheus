@@ -101,7 +101,21 @@ CDS_EXON_TABLE="${CACHE_DIR}/human_cds_exons.tsv.gz"
 # alone. Both are built; DEFAULT_POLICY drives the status plots and the summary.
 : "${POLICIES:=sequence_similarity synteny_aware}"
 : "${DEFAULT_POLICY:=synteny_aware}"
-: "${PLOT_MIN_SPECIES:=50}"        # a transcript column needs this many species to be plotted
+: "${PLOT_MIN_SPECIES:=}"          # species a transcript column needs to be
+                                   # plotted. Empty means "derive it from
+                                   # MIN_SPECIES_FRACTION of the query species
+                                   # actually searched" -- a fixed 50 silently
+                                   # produced an empty figure whenever fewer
+                                   # than 50 genomes were involved.
+
+# Half of n, rounded up, so a transcript must be in at least as many species to
+# be plotted as it needs to enter gene_files_selected. One threshold, one idea.
+plot_min_species_for() {
+    local n="${1:-0}"
+    [[ -n "${PLOT_MIN_SPECIES}" ]] && { printf '%s' "${PLOT_MIN_SPECIES}"; return 0; }
+    awk -v n="${n}" -v f="${MIN_SPECIES_FRACTION}" \
+        'BEGIN { v = int(n * f); if (v < n * f) v++; if (v < 1) v = 1; print v }'
+}
 : "${MIN_ASSIGNMENT_SCORE:=0.30}"  # below this a human transcript stays unassigned
 : "${MIN_ASSIGNMENT_PIDENT:=40}"   # protein identity floor for any assignment
 : "${FAMILY_MIN_FRACTION:=0.25}"   # paralog family membership threshold
@@ -113,6 +127,10 @@ CDS_EXON_TABLE="${CACHE_DIR}/human_cds_exons.tsv.gz"
 : "${CONDA_ROOT:=}"
 
 activate_env() {
+    # A Slurm job has already resolved the environment the way the submitter
+    # asked (see slurm/_common.sh). Searching for a conda root here would
+    # second-guess that and could put a different environment on PATH.
+    if [[ "${MORPHEUS_ENV_RESOLVED:-0}" == "1" ]]; then return 0; fi
     # Already inside the right environment, or a site module has already put the
     # tools on PATH (Apocrita: `ml miniforge`)? Nothing to do.
     if [[ "${CONDA_DEFAULT_ENV:-}" == "${CONDA_ENV}" ]]; then return 0; fi
@@ -123,22 +141,29 @@ activate_env() {
 
     local root="${CONDA_ROOT}"
     if [[ -z "${root}" ]]; then
-        for candidate in "${CONDA_PREFIX_1:-}" "${HOME}/miniforge3" "${HOME}/mambaforge" \
-                         "${HOME}/miniconda3" "${HOME}/anaconda3" \
-                         "${HOME}/Downloads/miniconda3" "/opt/miniconda3" \
-                         "/opt/homebrew/Caskroom/miniforge/base"; do
+        # Look for the environment itself, not for a `conda` binary. A
+        # --backend=mamba install has no reason to provide `conda`, and
+        # micromamba never does; requiring one made a perfectly good mamba
+        # install look like "no conda installation found".
+        for candidate in "${CONDA_PREFIX_1:-}" "${MAMBA_ROOT_PREFIX:-}" \
+                         "${HOME}/miniforge3" "${HOME}/mambaforge" \
+                         "${HOME}/micromamba" "${HOME}/miniconda3" \
+                         "${HOME}/anaconda3" "${HOME}/Downloads/miniconda3" \
+                         "/opt/miniconda3" "/opt/homebrew/Caskroom/miniforge/base"; do
             [[ -z "${candidate}" ]] && continue
-            [[ -x "${candidate}/bin/conda" ]] && { root="${candidate}"; break; }
+            [[ -d "${candidate}/envs/${CONDA_ENV}/bin" ]] && { root="${candidate}"; break; }
         done
     fi
     if [[ -z "${root}" ]]; then
-        echo "ERROR: no conda installation found. Set CONDA_ROOT." >&2
+        echo "ERROR: could not find an environment named '${CONDA_ENV}'." >&2
+        echo "  Activate it yourself (conda/mamba/micromamba activate ${CONDA_ENV})," >&2
+        echo "  or set CONDA_ROOT to the prefix whose envs/ holds it." >&2
         return 1
     fi
     # Put the environment on PATH directly; this works the same in an
     # interactive shell and in a non-interactive script.
     local envdir="${root}/envs/${CONDA_ENV}"
-    [[ -d "${envdir}" ]] || { echo "ERROR: conda env '${CONDA_ENV}' not found in ${root}/envs" >&2; return 1; }
+    [[ -d "${envdir}" ]] || { echo "ERROR: environment '${CONDA_ENV}' not found in ${root}/envs" >&2; return 1; }
     export PATH="${envdir}/bin:${PATH}"
     export CONDA_PREFIX="${envdir}"
     export CONDA_DEFAULT_ENV="${CONDA_ENV}"
