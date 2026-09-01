@@ -40,12 +40,19 @@ explicit rather than convention-driven.
   unrecognised key as an error** instead of ignoring the typo.
 - `--path_file` treats the file's directory as the project, so `gene_list.txt`
   and the tree resolve next to it.
+- **`install.sh` writes a `morpheus` launcher into the environment**, so
+  `mamba activate Morpheus` is all that is needed to get the command on PATH —
+  in an interactive session and in a job script alike. Previously the checkout
+  had to be added to PATH by hand, or called by full path. The launcher is a
+  shim, not a symlink: it records the checkout's absolute path and, if that
+  checkout later moves, says so instead of failing with a bare ENOENT.
+  `--no-launcher` opts out.
 - `morpheus env` reports every resolved input path with `ok` / `MISSING`.
 - `examples/paths.txt` and `examples/gene_list.txt`.
 - `tests/check_numbering.py` and `tests/check_slurm.py`: contiguous numbering,
   shared preamble, valid job names and log paths, no Slurm job asking for a step
   the pipeline does not have, and `--mode slurm` submitting exactly the scripts
-  that exist. Smoke test now 49 checks.
+  that exist), launcher generation, and flag rejection. Smoke test now 50 checks.
 
 ### Fixed
 

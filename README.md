@@ -74,13 +74,20 @@ bash install.sh
 ```
 
 This creates a conda environment named `Morpheus`, verifies every external tool,
-and runs a built-in self test. Then:
+runs a built-in self test, and installs a `morpheus` launcher into the
+environment. **Activating the environment is then all you need** — no PATH
+editing, and no full paths in job scripts:
 
 ```bash
-conda activate Morpheus
-export PATH="$PWD/bin:$PATH"
-morpheus env          # confirm what was resolved
+conda activate Morpheus     # or: mamba activate Morpheus
+morpheus env                # confirm what was resolved
 ```
+
+The launcher is a small script in the environment's `bin/` that hands off to this
+checkout. It records the checkout's absolute path, so if you later move or delete
+the checkout it says exactly that rather than failing with a bare "No such file
+or directory". Re-run `install.sh` from the new location to repoint it, or run
+several checkouts side by side with `--env=NAME` per checkout.
 
 Backends, for when a solve is heavy or you have no conda at all:
 
@@ -90,6 +97,14 @@ bash install.sh --backend=conda
 bash install.sh --backend=staged    # small solves, for memory-limited login nodes
 bash install.sh --backend=current   # no environment; check the active interpreter
 bash install.sh --check-only        # verify tools, create nothing
+bash install.sh --no-launcher       # do not add `morpheus` to the environment
+```
+
+With `--backend=current` or `--no-launcher` there is no environment to install
+into, so put the checkout on PATH yourself:
+
+```bash
+export PATH="/path/to/Morpheus/bin:$PATH"
 ```
 
 On a managed cluster, load your site's conda module first — the installer never
@@ -100,9 +115,10 @@ ml miniforge && bash install.sh
 ```
 
 `make help` lists the same operations as Makefile targets. `make test` runs the
-smoke test (35 checks: the optimal matcher against brute force, the codon table,
-ORF reporting, Newick pruning, every CLI subcommand, all shell syntax, and every
-figure script against synthetic input).
+smoke test (50 checks: the optimal matcher against brute force, the codon table,
+ORF reporting, Newick pruning, every CLI subcommand, flag rejection, `paths.txt`
+parsing, contiguous directory numbering, Slurm script consistency, all shell
+syntax, and every figure script against synthetic input).
 
 ### Requirements
 
@@ -628,6 +644,29 @@ command on your laptop before running it on the cluster.
 
 `--search` and `--skip_plot` are carried into every job, so one submitted chain
 runs the same analysis end to end.
+
+### Getting `morpheus` on PATH in a job
+
+`install.sh` puts a `morpheus` launcher inside the environment, so activating it
+is enough — in an interactive session and in a job script alike:
+
+```bash
+ml miniforge
+mamba activate Morpheus
+morpheus run --gene_list gene_list.txt --path_file paths.txt --mode slurm
+```
+
+The four submitted jobs do not depend on your PATH: `morpheus run --mode slurm`
+passes `MORPHEUS_HOME` to each of them, and each re-activates the environment
+through `slurm/_common.sh`. Only submitting the sbatch scripts *by hand* requires
+you to export `MORPHEUS_HOME` yourself.
+
+If you installed with `--no-launcher` or `--backend=current`, use the checkout
+directly instead:
+
+```bash
+export PATH=/path/to/Morpheus/bin:$PATH    # or call /path/to/Morpheus/bin/morpheus
+```
 
 ### Which module to load
 

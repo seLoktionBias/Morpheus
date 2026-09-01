@@ -133,6 +133,27 @@ check bash -c '
     cp "${HERE}/examples/paths.txt" "$d/paths.txt"; cd "$d"
     set -euo pipefail; source "${HERE}/config/config.sh"'
 
+echo "-- env launcher --"
+# `conda activate Morpheus` must be enough to get `morpheus` on PATH, so the
+# installer has to write a working shim into the environment's bin/.
+check bash -c '
+    root="${TMP}/fakeconda"; mkdir -p "${root}/envs/SmokeEnv/bin"
+    MORPHEUS_ENV=SmokeEnv MORPHEUS_CONDA_ROOT="${root}" \
+        bash "${HERE}/install.sh" --env-only --backend=current --no-launcher >/dev/null 2>&1
+    [[ ! -e "${root}/envs/SmokeEnv/bin/morpheus" ]] || { echo "--no-launcher still wrote one"; exit 1; }
+    MORPHEUS_ENV=SmokeEnv MORPHEUS_CONDA_ROOT="${root}" \
+        bash "${HERE}/install.sh" --env-only --backend=current >/dev/null 2>&1
+    shim="${root}/envs/SmokeEnv/bin/morpheus"
+    [[ -x "${shim}" ]]            || { echo "no launcher written"; exit 1; }
+    bash -n "${shim}"             || { echo "launcher is not valid bash"; exit 1; }
+    [[ "$("${shim}" version)" == "$(cat "${HERE}/VERSION")" ]] \
+        || { echo "launcher does not reach the checkout"; exit 1; }
+    # A moved checkout must say so, not fail with a bare ENOENT.
+    sed -i.bak "s|MORPHEUS_HOME=\".*\"|MORPHEUS_HOME=\"/gone\"|" "${shim}"
+    out="$("${shim}" version 2>&1)"; rc=$?
+    [[ ${rc} -eq 127 ]]           || { echo "stale launcher exit was ${rc}, wanted 127"; exit 1; }
+    grep -q "/gone" <<<"${out}"   || { echo "stale launcher did not name the missing checkout"; exit 1; }'
+
 echo "-- results numbering is contiguous --"
 check python3 "${HERE}/tests/check_numbering.py" "${HERE}"
 

@@ -14,6 +14,7 @@
 #   bash install.sh --backend=current   # no env; check the active interpreter
 #   bash install.sh --env-only          # create the environment, skip the checks
 #   bash install.sh --check-only        # check tools, create nothing
+#   bash install.sh --no-launcher       # do not add `morpheus` to the env
 #
 # Morpheus itself needs no third-party Python packages, so a failed solve only
 # costs you the external tools, never the pipeline logic.
@@ -25,6 +26,7 @@ ENV_NAME="${MORPHEUS_ENV:-Morpheus}"
 BACKEND="${MORPHEUS_INSTALL_BACKEND:-auto}"
 ENV_ONLY=0
 CHECK_ONLY=0
+NO_LAUNCHER=0
 
 usage() { sed -n '3,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
@@ -34,6 +36,7 @@ for arg in "$@"; do
         --env=*)      ENV_NAME="${arg#--env=}" ;;
         --env-only)   ENV_ONLY=1 ;;
         --check-only) CHECK_ONLY=1 ;;
+        --no-launcher) NO_LAUNCHER=1 ;;
         -h|--help)    usage; exit 0 ;;
         *) echo "[Morpheus] unknown option: $arg" >&2; usage >&2; exit 2 ;;
     esac
@@ -100,6 +103,67 @@ install_env() {
 }
 
 # --------------------------------------------------------------------------
+# launcher
+# --------------------------------------------------------------------------
+
+# Where the environment keeps its executables, or non-zero if there is no env.
+env_bin_dir() {
+    local mgr base
+    # Already inside the target environment (the usual case: activate, then
+    # install) - CONDA_PREFIX is the answer and needs no manager on PATH.
+    if [[ "${CONDA_DEFAULT_ENV:-}" == "${ENV_NAME}" && -d "${CONDA_PREFIX:-}/bin" ]]; then
+        printf '%s' "${CONDA_PREFIX}/bin"; return 0
+    fi
+    # An explicitly named root wins over searching.
+    if [[ -n "${MORPHEUS_CONDA_ROOT:-}" && -d "${MORPHEUS_CONDA_ROOT}/envs/${ENV_NAME}/bin" ]]; then
+        printf '%s' "${MORPHEUS_CONDA_ROOT}/envs/${ENV_NAME}/bin"; return 0
+    fi
+    for mgr in mamba conda; do
+        have "$mgr" || continue
+        base="$("$mgr" info --base 2>/dev/null)" || continue
+        if [[ -d "${base}/envs/${ENV_NAME}/bin" ]]; then
+            printf '%s' "${base}/envs/${ENV_NAME}/bin"; return 0
+        fi
+    done
+    return 1
+}
+
+# `conda activate Morpheus` puts the environment's bin/ on PATH, but the real
+# launcher lives in this checkout, which is somewhere else entirely. Drop a shim
+# into the environment so activating it is genuinely all you have to do -- no
+# PATH editing, no full paths in job scripts.
+install_launcher() {
+    [[ ${NO_LAUNCHER} -eq 1 ]] && { say "skipping the launcher (--no-launcher)"; return 0; }
+
+    local envbin
+    if ! envbin="$(env_bin_dir)"; then
+        warn "no '${ENV_NAME}' environment found, so no launcher was installed."
+        warn "run morpheus with: export PATH=\"${HERE}/bin:\$PATH\""
+        return 0
+    fi
+
+    local target="${envbin}/morpheus"
+    # A shim, not a symlink: a symlink into a checkout that later moves fails
+    # with a bare "No such file or directory" naming the wrong path.
+    cat > "${target}" <<SHIM
+#!/usr/bin/env bash
+# Morpheus launcher, written by install.sh. Delegates to the checkout below.
+# Regenerate by re-running install.sh from a different checkout.
+MORPHEUS_HOME="${HERE}"
+if [[ ! -x "\${MORPHEUS_HOME}/bin/morpheus" ]]; then
+    echo "morpheus: the checkout this launcher points at is gone:" >&2
+    echo "  \${MORPHEUS_HOME}" >&2
+    echo "Re-run install.sh from the current checkout." >&2
+    exit 127
+fi
+export MORPHEUS_HOME
+exec "\${MORPHEUS_HOME}/bin/morpheus" "\$@"
+SHIM
+    chmod +x "${target}"
+    say "launcher installed: ${target} -> ${HERE}/bin/morpheus"
+}
+
+# --------------------------------------------------------------------------
 # verification
 # --------------------------------------------------------------------------
 
@@ -109,13 +173,8 @@ check_tools() {
 
     # Look inside the env we just built, without requiring `conda activate` to
     # work in a non-interactive shell.
-    local envbin=""
-    for mgr in mamba conda; do
-        have "$mgr" || continue
-        local base
-        base="$("$mgr" info --base 2>/dev/null)" || continue
-        [[ -d "${base}/envs/${ENV_NAME}/bin" ]] && { envbin="${base}/envs/${ENV_NAME}/bin"; break; }
-    done
+    local envbin
+    envbin="$(env_bin_dir)" || envbin=""
     [[ -n "${envbin}" ]] && export PATH="${envbin}:${PATH}"
 
     for exe in python3 blastx blastp makeblastdb mafft Rscript; do
@@ -196,6 +255,7 @@ fi
 install_env || { warn "environment creation did not complete"; }
 
 if [[ ${ENV_ONLY} -eq 1 ]]; then
+    install_launcher
     say "environment step finished (--env-only)"
     exit 0
 fi
@@ -205,18 +265,25 @@ check_tools || rc=1
 self_test || rc=1
 
 chmod +x "${HERE}/bin/morpheus" 2>/dev/null || true
+install_launcher
 
 cat <<EOF
 
 [Morpheus] Installation finished (backend: ${BACKEND})
 
-Activate and run:
-  conda activate ${ENV_NAME}
-  export PATH="${HERE}/bin:\$PATH"
-  morpheus env          # confirm what was resolved
+Activating the environment is all you need; `morpheus` is on PATH with it:
+
+  conda activate ${ENV_NAME}      # or: mamba activate ${ENV_NAME}
+  morpheus env                    # confirm what was resolved
   morpheus run --dry-run
 
-On a cluster, load your site's conda module first, e.g.:
-  ml miniforge && conda activate ${ENV_NAME}
+On a cluster, load your site's conda module first:
+
+  ml miniforge && mamba activate ${ENV_NAME}
+
+If you installed with --backend current or --no-launcher, put the checkout on
+PATH yourself instead:
+
+  export PATH="${HERE}/bin:\$PATH"
 EOF
 exit $rc
