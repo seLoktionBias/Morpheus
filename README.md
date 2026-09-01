@@ -115,7 +115,7 @@ ml miniforge && bash install.sh
 ```
 
 `make help` lists the same operations as Makefile targets. `make test` runs the
-smoke test (50 checks: the optimal matcher against brute force, the codon table,
+smoke test (51 checks: the optimal matcher against brute force, the codon table,
 ORF reporting, Newick pruning, every CLI subcommand, flag rejection, `paths.txt`
 parsing, contiguous directory numbering, Slurm script consistency, all shell
 syntax, and every figure script against synthetic input).
@@ -167,6 +167,16 @@ morpheus run --gene_list gene_list.txt --search region --skip_plot
 | `--species NAME...` | restrict the search to these `Genus_species` |
 | `--overwrite` | redo per-species searches already on disk |
 | `--dry-run` | print the plan and stop; works in `--mode slurm` too |
+
+Site options for `--mode slurm` (ignored, with a warning, in `local` mode):
+
+| Flag | Meaning |
+|---|---|
+| `--slurm_partition NAME` | queue to submit to, e.g. `compute` |
+| `--slurm_account NAME` | account to charge |
+| `--slurm_module NAME` | site module providing conda (default `miniforge`; `""` if conda is already on PATH) |
+| `--array_throttle N` | at most N search tasks running at once |
+| `--slurm_extra "..."` | passed verbatim to every `sbatch`, e.g. `"--qos=short"` |
 
 Give either `--gene` or `--gene_list`, not both. Give either `--path_file` or the
 `--bat_dir` / `--ref_dir` / `--output` trio; a flag always overrides the file, so
@@ -644,6 +654,31 @@ command on your laptop before running it on the cluster.
 
 `--search` and `--skip_plot` are carried into every job, so one submitted chain
 runs the same analysis end to end.
+
+On a cluster that needs a named queue:
+
+```bash
+MORPHEUS=/data/home/me/software/Morpheus/bin/morpheus
+
+"$MORPHEUS" run \
+    --gene_list "${wdr}/gene_list.txt" \
+    --path_file "${wdr}/paths.txt" \
+    --mode slurm \
+    --slurm_partition compute \
+    --slurm_module miniforge \
+    --array_throttle 20
+```
+
+Per-job `--mem` and `--time` live in the `slurm/*.sbatch` files, because the four
+jobs are not alike — the reference build wants 32G for the GTF parse, an array
+task wants 8G. `--slurm_extra "--mem=64G"` overrides all four at once if you need
+it to.
+
+Note the shape of that command: **one submission for the whole gene list**, not a
+loop over genes. The reference build, the paralog screen and the per-genome
+search are shared across every gene in the list, so submitting per gene would
+redo the entire 103-genome search once per gene. Pass the list and let the array
+parallelise over genomes.
 
 ### Getting `morpheus` on PATH in a job
 

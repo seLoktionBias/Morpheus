@@ -27,7 +27,9 @@ ALL_STEPS=(cds-table human-reference families bat-search screen assign
 FROM=""; SPECIES=(); OVERWRITE=""; DRY_RUN=0
 GENE_ARG=""; GENE_LIST_ARG=""; MODE="local"; SEARCH="both"
 TREE_ARG=""; BAT_ARG=""; REF_ARG=""; OUT_ARG=""; PATH_FILE_ARG=""
-SKIP_PLOT=0
+SKIP_PLOT=0; SLURM_MODULE_SET=0
+SLURM_PARTITION=""; SLURM_ACCOUNT=""; SLURM_MODULE_ARG=""; SLURM_EXTRA=""
+ARRAY_THROTTLE=""
 
 usage() {
     cat <<'EOF'
@@ -55,6 +57,16 @@ How much to run:
                                        identity
                          both        - both, side by side (default)
   --skip_plot            produce no figures, only the tables
+
+Slurm (only meaningful with --mode slurm):
+  --slurm_partition NAME queue to submit to, e.g. compute
+  --slurm_account NAME   account to charge
+  --slurm_module NAME    site module providing conda (default miniforge;
+                           pass "" if conda is already on PATH)
+  --array_throttle N     at most N search tasks running at once
+  --slurm_extra "..."    passed verbatim to every sbatch, e.g. "--qos=short".
+                           Per-job --mem and --time defaults live in the sbatch
+                           files; anything given here overrides all four jobs.
 
 Partial runs:
   --from STEP            start at STEP and run everything after it
@@ -89,6 +101,16 @@ while [[ $# -gt 0 ]]; do
         --path_file|--path-file)
                        PATH_FILE_ARG="${2:?--path_file needs a file}"; shift 2 ;;
         --skip_plot|--skip-plot) SKIP_PLOT=1; shift ;;
+        --slurm_partition|--slurm-partition)
+                       SLURM_PARTITION="${2:?--slurm_partition needs a name}"; shift 2 ;;
+        --slurm_account|--slurm-account)
+                       SLURM_ACCOUNT="${2:?--slurm_account needs a name}"; shift 2 ;;
+        --slurm_module|--slurm-module)
+                       SLURM_MODULE_ARG="${2-}"; SLURM_MODULE_SET=1; shift 2 ;;
+        --array_throttle|--array-throttle)
+                       ARRAY_THROTTLE="${2:?--array_throttle needs a number}"; shift 2 ;;
+        --slurm_extra|--slurm-extra)
+                       SLURM_EXTRA="${2:?--slurm_extra needs a string}"; shift 2 ;;
         --from)        FROM="${2:?--from needs a step}"; shift 2 ;;
         --only)        ONLY_STEPS+=("${2:?--only needs a step}"); shift 2 ;;
         --species)     shift; while [[ $# -gt 0 && "$1" != --* ]]; do SPECIES+=("$1"); shift; done ;;
@@ -111,6 +133,18 @@ esac
 
 [[ -n "${GENE_ARG}" && -n "${GENE_LIST_ARG}" ]] && \
     die "give --gene or --gene_list, not both"
+
+if [[ "${MODE}" != "slurm" ]]; then
+    warn_unused() { [[ -n "$2" ]] && echo "WARNING: $1 is ignored without --mode slurm" >&2; return 0; }
+    warn_unused --slurm_partition "${SLURM_PARTITION}"
+    warn_unused --slurm_account   "${SLURM_ACCOUNT}"
+    warn_unused --array_throttle  "${ARRAY_THROTTLE}"
+    warn_unused --slurm_extra     "${SLURM_EXTRA}"
+    [[ ${SLURM_MODULE_SET} -eq 1 ]] && \
+        echo "WARNING: --slurm_module is ignored without --mode slurm" >&2
+fi
+[[ -n "${ARRAY_THROTTLE}" && ! "${ARRAY_THROTTLE}" =~ ^[0-9]+$ ]] && \
+    die "--array_throttle must be a number, not '${ARRAY_THROTTLE}'"
 
 for s in ${ONLY_STEPS[@]+"${ONLY_STEPS[@]}"} ${FROM:+"${FROM}"}; do
     ok=0; for k in "${ALL_STEPS[@]}"; do [[ "$s" == "$k" ]] && ok=1; done
@@ -213,7 +247,20 @@ if [[ "${MODE}" == "slurm" ]]; then
     [[ "${n_genomes}" -gt 0 ]] || die "no genome sub-directories in ${BAT_ANNOTATION_DIR}"
 
     mkdir -p "${WORKING_DIR}/logs"
+
+    # Site options, applied to all four jobs. Anything here overrides the
+    # #SBATCH defaults in the scripts, which is what sbatch's own precedence
+    # rules already do for command-line flags.
+    SB=()
+    [[ -n "${SLURM_PARTITION}" ]] && SB+=(--partition="${SLURM_PARTITION}")
+    [[ -n "${SLURM_ACCOUNT}"   ]] && SB+=(--account="${SLURM_ACCOUNT}")
+    # shellcheck disable=SC2206
+    [[ -n "${SLURM_EXTRA}"     ]] && SB+=(${SLURM_EXTRA})
+    ARRAY_SPEC="1-${n_genomes}"
+    [[ -n "${ARRAY_THROTTLE}" ]] && ARRAY_SPEC="${ARRAY_SPEC}%${ARRAY_THROTTLE}"
+
     EXPORTS="ALL,MORPHEUS_HOME=${MORPHEUS_HOME},MORPHEUS_PROJECT_DIR=${WORKING_DIR}"
+    [[ ${SLURM_MODULE_SET} -eq 1 ]] && EXPORTS+=",MORPHEUS_MODULE=${SLURM_MODULE_ARG}"
     EXPORTS+=",GENE_LIST=${GENE_LIST},SPECIES_TREE=${SPECIES_TREE}"
     EXPORTS+=",BAT_ANNOTATION_DIR=${BAT_ANNOTATION_DIR},HUMAN_GENOME_DIR=${HUMAN_GENOME_DIR}"
     EXPORTS+=",WORKING_DIR=${WORKING_DIR},MORPHEUS_SEARCH=${SEARCH}"
@@ -221,9 +268,9 @@ if [[ "${MODE}" == "slurm" ]]; then
 
     if [[ ${DRY_RUN} -eq 1 ]]; then
         cat <<EOF
-would submit:
+would submit${SB[0]+, with ${SB[*]}}:
   00_reference.sbatch
-  01_bat_search_array.sbatch   --array=1-${n_genomes}
+  01_bat_search_array.sbatch   --array=${ARRAY_SPEC}
   02_after_search.sbatch
   03_collect.sbatch
 with --export=${EXPORTS}
@@ -233,19 +280,18 @@ EOF
 
     command -v sbatch >/dev/null 2>&1 || die "--mode slurm, but 'sbatch' is not on PATH"
     S="${MORPHEUS_HOME}/slurm"
-    ref=$(sbatch --parsable --export="${EXPORTS}" "${S}/00_reference.sbatch")
-    arr=$(sbatch --parsable --export="${EXPORTS}" --dependency=afterok:"${ref}" \
-                 --array=1-"${n_genomes}" "${S}/01_bat_search_array.sbatch")
-    post=$(sbatch --parsable --export="${EXPORTS}" --dependency=afterok:"${arr}" \
-                  "${S}/02_after_search.sbatch")
-    coll=$(sbatch --parsable --export="${EXPORTS}" --dependency=afterok:"${post}" \
-                  "${S}/03_collect.sbatch")
+    submit() { sbatch --parsable --export="${EXPORTS}" ${SB[@]+"${SB[@]}"} "$@"; }
+    ref=$(submit "${S}/00_reference.sbatch")
+    arr=$(submit --dependency=afterok:"${ref}" --array="${ARRAY_SPEC}" \
+                 "${S}/01_bat_search_array.sbatch")
+    post=$(submit --dependency=afterok:"${arr}" "${S}/02_after_search.sbatch")
+    coll=$(submit --dependency=afterok:"${post}" "${S}/03_collect.sbatch")
     cat <<EOF
 
 Submitted the whole chain; nothing else to do.
 
   ${ref}   reference     steps 1-3
-  ${arr}   search        array of ${n_genomes}, one task per genome
+  ${arr}   search        array ${ARRAY_SPEC}, one task per genome
   ${post}   post-search   screen, assign, copy number, sequences, align
   ${coll}   collect       $( [[ ${SKIP_PLOT} -eq 1 ]] && echo "summary only (--skip_plot)" || echo "figures and summary" )
 

@@ -103,6 +103,7 @@ refuses "--from bogus-step"       --from bogus-step --dry-run
 refuses "an unknown flag"         --not-a-flag --dry-run
 refuses "--gene with --gene_list" --gene A --gene_list /dev/null --dry-run
 refuses "a missing --path_file"   --path_file /nonexistent/paths.txt --dry-run
+refuses "a non-numeric --array_throttle" --mode slurm --array_throttle lots --dry-run
 
 echo "-- selection analysis is gone --"
 check bash -c '! grep -rniE "hyphy|absrel|busted" \

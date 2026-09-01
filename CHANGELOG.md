@@ -36,6 +36,11 @@ explicit rather than convention-driven.
 - **`--search region|similarity|both`** selects the scope and ranking together;
   `region` and `similarity` each run about half the work of `both`.
 - **`--skip_plot`** skips every figure, and drops R from the requirements.
+- **Slurm site options**: `--slurm_partition`, `--slurm_account`,
+  `--slurm_module`, `--array_throttle` and `--slurm_extra`. There was previously
+  no way to name a queue, so `--mode slurm` could not be used at all on a cluster
+  whose default partition is not the right one. Each is warned about if passed
+  without `--mode slurm`.
 - `paths.txt` accepts key synonyms, comments, quotes and `~`, and **reports an
   unrecognised key as an error** instead of ignoring the typo.
 - `--path_file` treats the file's directory as the project, so `gene_list.txt`
@@ -52,7 +57,7 @@ explicit rather than convention-driven.
 - `tests/check_numbering.py` and `tests/check_slurm.py`: contiguous numbering,
   shared preamble, valid job names and log paths, no Slurm job asking for a step
   the pipeline does not have, and `--mode slurm` submitting exactly the scripts
-  that exist), launcher generation, and flag rejection. Smoke test now 50 checks.
+  that exist), launcher generation, and flag rejection. Smoke test now 51 checks.
 
 ### Fixed
 
