@@ -36,6 +36,12 @@ usage() {
 morpheus run - region-restricted transcript recovery, orthologous transcript
                assignment and gene copy number across TOGA2 genomes.
 
+  morpheus run --gene_list gene_list.txt        # the usual invocation
+  morpheus run --gene_list gene_list.txt --dry-run     # check first
+
+Inputs come from paths.txt in the current directory unless you say otherwise.
+Full examples at the bottom of this message.
+
 Genes (give one of these):
   --gene NAME            a single gene symbol
   --gene_list FILE       a text file, one gene symbol per line
@@ -81,6 +87,66 @@ Steps: cds-table human-reference families bat-search screen assign compare
 
 Settings (export before running): THREADS, MIN_SPECIES_FRACTION,
        MIN_ASSIGNMENT_SCORE, MIN_ASSIGNMENT_PIDENT, PLOT_MIN_SPECIES
+
+EXAMPLES
+
+  A paths.txt saves repeating the directories. Three lines is the whole file:
+
+      human_genome_dir=/data/reference/human
+      bat_annotation_dir=/data/toga2/bat1k
+      primary_working_dir=/scratch/me/isg_project
+
+  Run from the directory holding it:
+
+      morpheus run --gene_list gene_list.txt
+
+  One gene, no list file needed:
+
+      morpheus run --gene OAS1
+
+  No paths.txt at all - everything on the command line:
+
+      morpheus run --gene_list gene_list.txt \
+          --ref_dir /data/reference/human \
+          --bat_dir /data/toga2/bat1k \
+          --tree    /data/reference/bat1k_tree.nwk \
+          --output  /scratch/me/isg_project
+
+  Shared paths.txt, but write this run somewhere else:
+
+      morpheus run --gene_list gene_list.txt \
+          --path_file /shared/paths.txt --output ./run2
+
+  On a cluster. Submits four dependent jobs and returns immediately; pass the
+  whole gene list, not one gene at a time - the search is shared across genes
+  and the array already parallelises over genomes:
+
+      MORPHEUS=/data/home/me/software/Morpheus/bin/morpheus
+      "$MORPHEUS" run \
+          --gene_list "${wdr}/gene_list.txt" \
+          --path_file "${wdr}/paths.txt" \
+          --mode slurm \
+          --slurm_partition compute \
+          --slurm_module miniforge \
+          --array_throttle 20
+
+  Half the work: the syntenic locus only, tables but no figures:
+
+      morpheus run --gene_list gene_list.txt --search region --skip_plot
+
+  Resume after a failure, or redo one step:
+
+      morpheus run --gene_list gene_list.txt --from assign
+      morpheus run --only copy-number
+
+  Try two species before committing to all of them:
+
+      morpheus run --gene OAS1 --species Myotis_myotis Phyllostomus_discolor
+
+WHEN IT WILL NOT START
+
+  morpheus env      prints every resolved path with ok / MISSING beside it.
+                    That is almost always the answer.
 EOF
 }
 

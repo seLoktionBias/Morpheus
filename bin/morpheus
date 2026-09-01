@@ -22,18 +22,81 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MORPHEUS_HOME="$(cd "${here}/.." && pwd)"
 export MORPHEUS_HOME
 
+# A heredoc, not `sed -n 'M,Np'` over this file's own comment block: that range
+# silently drifts every time a comment is added above it, and starts printing
+# shell source at the user.
 usage() {
-    sed -n '3,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     cat <<'EOF'
+morpheus - comparative transcript recovery, orthologous transcript assignment
+           and gene copy number across TOGA2-annotated genomes.
 
-Commands:
-  run [options]        run the pipeline (see `morpheus run --help`)
+USAGE
+  morpheus <command> [options]
+
+COMMANDS
+  run [options]        run the pipeline, or any part of it
+  env                  show what was resolved, and what is missing
   step NAME [options]  run one step through the Python CLI
-  plot NAME [options]  run one figure script
-                         exon-models | transcript-status | scope-comparison | copy-number
-  env                  report the resolved environment and inputs
+  plot NAME [options]  redraw one figure
+                         exon-models | transcript-status | scope-comparison
+                         | copy-number
   version              print the version
   help                 this message
+
+FIRST RUN
+  1. Tell Morpheus where your data is. Make a paths.txt:
+
+       human_genome_dir=/data/reference/human
+       bat_annotation_dir=/data/toga2/bat1k
+       primary_working_dir=/scratch/me/isg_project
+
+     (a ready-to-edit copy is in examples/paths.txt)
+
+  2. Make a gene_list.txt, one gene symbol per line:
+
+       MX1
+       OAS1
+       IFITM3
+
+  3. Check it found everything. This never runs an analysis:
+
+       morpheus env
+       morpheus run --gene_list gene_list.txt --dry-run
+
+  4. Run it:
+
+       morpheus run --gene_list gene_list.txt
+
+EXAMPLES
+  # one gene, reading paths.txt from the current directory
+  morpheus run --gene OAS1
+
+  # a whole list, on a cluster: submits four dependent jobs and returns
+  morpheus run --gene_list gene_list.txt --path_file paths.txt \
+      --mode slurm --slurm_partition compute
+
+  # no paths.txt; say where everything is on the command line
+  morpheus run --gene_list gene_list.txt \
+      --ref_dir /data/reference/human \
+      --bat_dir /data/toga2/bat1k \
+      --tree    /data/reference/bat1k_tree.nwk \
+      --output  /scratch/me/isg_project
+
+  # syntenic locus only, tables but no figures - about half the work
+  morpheus run --gene_list gene_list.txt --search region --skip_plot
+
+  # something failed at the assignment step; pick up from there
+  morpheus run --gene_list gene_list.txt --from assign
+
+  # redraw one gene's exon models after the fact
+  morpheus plot exon-models --gene MX1
+
+WHERE THE RESULTS GO
+  <output>/results/01_human_reference   ... 06_plots
+  <output>/results/SUMMARY__<ranking>.md      <- start here
+
+  morpheus run --help    every flag, in full
+  README.md              what each step actually does, and why
 EOF
 }
 

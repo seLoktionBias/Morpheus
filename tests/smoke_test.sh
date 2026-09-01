@@ -155,6 +155,9 @@ check bash -c '
     [[ ${rc} -eq 127 ]]           || { echo "stale launcher exit was ${rc}, wanted 127"; exit 1; }
     grep -q "/gone" <<<"${out}"   || { echo "stale launcher did not name the missing checkout"; exit 1; }'
 
+echo "-- help matches the program --"
+check python3 "${HERE}/tests/check_help.py" "${HERE}"
+
 echo "-- results numbering is contiguous --"
 check python3 "${HERE}/tests/check_numbering.py" "${HERE}"
 

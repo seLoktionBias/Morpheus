@@ -54,13 +54,23 @@ explicit rather than convention-driven.
   `--no-launcher` opts out.
 - `morpheus env` reports every resolved input path with `ok` / `MISSING`.
 - `examples/paths.txt` and `examples/gene_list.txt`.
+- **Worked examples in `morpheus --help` and `morpheus run --help`**: a numbered
+  first-run walkthrough including what `paths.txt` contains, and complete
+  commands for the local, cluster, no-paths.txt and resume-after-failure cases.
+  `tests/check_help.py` holds them to the parser — every flag shown must be
+  accepted, every flag accepted must be shown.
 - `tests/check_numbering.py` and `tests/check_slurm.py`: contiguous numbering,
   shared preamble, valid job names and log paths, no Slurm job asking for a step
   the pipeline does not have, and `--mode slurm` submitting exactly the scripts
-  that exist), launcher generation, and flag rejection. Smoke test now 51 checks.
+  that exist), launcher generation, help/parser agreement, and flag rejection.
+  Smoke test now 52 checks.
 
 ### Fixed
 
+- `morpheus --help` printed `####` and `set -euo pipefail` at the user: it was
+  built with `sed -n '3,18p'` over the script's own comment block, and that line
+  range drifted as comments were added above it. Both help screens are now
+  explicit text, and a test fails if shell source ever leaks again.
 - The HyPhy Slurm array read `results/05_genes/manifest.tsv`, a path the
   per-policy split had removed; every task would have failed. Moot now that the
   array is gone, but it was live in 1.0.0.
