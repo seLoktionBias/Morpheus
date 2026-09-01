@@ -4,6 +4,13 @@
 
 ### Changed
 
+- `tests/check_env_modes.sh` now accepts any of several correct failure messages
+  rather than one exact string, and dumps the sandbox's PATH when none match.
+  A job missing its environment in two ways can legitimately report either
+  cause; asserting one exact wording made the test fail intermittently (roughly
+  1 run in 30) while the behaviour under test — fail loudly, name the cause,
+  exit non-zero — was correct every time. The dump is there because that flake
+  was never reproduced on demand, and the next occurrence should say why.
 - **`synteny_aware` is renamed `structure_aware`.** The old name was a misnomer:
   the ranking weighs *exon structure* and nothing positional. No scoring term
   reads a coordinate, a flanking gene, or a distance from the home locus —

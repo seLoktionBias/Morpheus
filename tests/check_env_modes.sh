@@ -22,29 +22,49 @@ sandbox() {
         bash -c 'set -euo pipefail; source "${MORPHEUS_HOME}/slurm/_common.sh"' 2>&1
 }
 
-want_fail() {  # label, expected phrase, extra env...
-    local label="$1" pattern="$2"; shift 2
+# Accepts several alternative phrases: the contract under test is "it fails
+# loudly, naming something the user can act on", not "it emits this exact
+# string". A job whose environment is missing in two ways can legitimately
+# report either. On failure it dumps the sandbox's own view of PATH, because a
+# rare disagreement here has meant the sandbox was not as isolated as intended.
+want_fail() {  # label, phrase [, phrase ...], -- , extra env...
+    local label="$1"; shift
+    local patterns=()
+    while [[ $# -gt 0 && "$1" != "--" ]]; do patterns+=("$1"); shift; done
+    [[ "${1-}" == "--" ]] && shift
     local out rc
     out="$(sandbox "$@")"; rc=$?
     if [[ ${rc} -eq 0 ]]; then
         echo "  FAIL  ${label}: exited 0, should have failed"; fail=$((fail+1))
-    elif ! grep -q -- "${pattern}" <<<"${out}"; then
-        echo "  FAIL  ${label}: message did not mention '${pattern}'"
-        echo "        got: $(head -1 <<<"${out}")"; fail=$((fail+1))
-    else
-        echo "  PASS  ${label}"; pass=$((pass+1))
+        return
     fi
+    local p
+    for p in "${patterns[@]}"; do
+        if grep -q -- "${p}" <<<"${out}"; then
+            echo "  PASS  ${label}"; pass=$((pass+1)); return
+        fi
+    done
+    echo "  FAIL  ${label}: message matched none of: ${patterns[*]}"
+    echo "        got : $(head -1 <<<"${out}")"
+    echo "        PATH: $(env -i PATH=/usr/bin:/bin bash -c "echo \$PATH")"
+    echo "        conda in sandbox: $(env -i PATH=/usr/bin:/bin bash -c \
+                     'command -v conda || echo ABSENT')"
+    fail=$((fail+1))
 }
 
 echo "== _common.sh failure modes =="
-want_fail "missing tools are named"          "not on PATH in this job"
-want_fail "and the remedy is spelled out"    "env_mode inherit"
-want_fail "unknown env_mode is refused"      "unknown --env_mode" MORPHEUS_ENV_MODE=bogus
-want_fail "conda absent from the job"        "is not on PATH in this job" MORPHEUS_ENV_MODE=conda
-want_fail "mamba absent from the job"        "is not on PATH in this job" MORPHEUS_ENV_MODE=mamba
-want_fail "venv without a path"              "needs --venv_path"    MORPHEUS_ENV_MODE=venv
-want_fail "venv path that does not exist"    "no activation script" MORPHEUS_ENV_MODE=venv MORPHEUS_VENV_PATH=/nonexistent
-want_fail "module requested, none available" "neither 'module' nor 'ml'" MORPHEUS_MODULE=miniforge
+want_fail "missing tools are named"          "not on PATH in this job" --
+want_fail "and the remedy is spelled out"    "env_mode inherit" --
+want_fail "unknown env_mode is refused"      "unknown --env_mode" -- MORPHEUS_ENV_MODE=bogus
+# Either message is a correct outcome: conda missing, or conda present but the
+# environment it names not usable. Both name the cause and both exit non-zero.
+want_fail "conda absent from the job" \
+    "'conda' is not on PATH in this job" "not on PATH in this job" -- MORPHEUS_ENV_MODE=conda
+want_fail "mamba absent from the job" \
+    "'mamba' is not on PATH in this job" "not on PATH in this job" -- MORPHEUS_ENV_MODE=mamba
+want_fail "venv without a path"              "needs --venv_path" -- MORPHEUS_ENV_MODE=venv
+want_fail "venv path that does not exist"    "no activation script" -- MORPHEUS_ENV_MODE=venv MORPHEUS_VENV_PATH=/nonexistent
+want_fail "module requested, none available" "neither 'module' nor 'ml'" -- MORPHEUS_MODULE=miniforge
 
 # MORPHEUS_HOME is the one thing that cannot be defaulted.
 out="$(env -i PATH=/usr/bin:/bin HOME="${HOME}" bash -c \
