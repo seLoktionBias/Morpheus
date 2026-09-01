@@ -524,15 +524,24 @@ n=$(find "$(awk -F= '/bat_annotation_dir/{print $2}' paths.txt)" \
 arr=$(sbatch --parsable --dependency=afterok:$ref --array=1-$n \
       $MORPHEUS_HOME/slurm/01_bat_search_array.sbatch)
 
-post=$(sbatch --parsable --dependency=afterok:$arr \
-       $MORPHEUS_HOME/slurm/02_after_search.sbatch)
+sbatch --dependency=afterok:$arr $MORPHEUS_HOME/slurm/02_after_search.sbatch
+```
 
-m=$(awk -F'\t' 'NR>1 && $16=="1"' results/05_genes/synteny_aware/manifest.tsv | wc -l)
-hy=$(sbatch --parsable --dependency=afterok:$post --array=1-$m%20 \
-     $MORPHEUS_HOME/slurm/03_hyphy_array.sbatch)
+Stop there and wait for `02_after_search` to finish. The size of the HyPhy array
+is the number of alignments that cleared the species threshold, and nothing
+knows that number until the deliverables step has written the manifests — so it
+cannot be computed at submission time on a fresh run. Once `02` is done:
 
+```bash
+n=$(bash $MORPHEUS_HOME/slurm/03_hyphy_array.sbatch --count)
+hy=$(sbatch --parsable --array=1-$n%20 $MORPHEUS_HOME/slurm/03_hyphy_array.sbatch)
 sbatch --dependency=afterany:$hy $MORPHEUS_HOME/slurm/04_collect.sbatch
 ```
+
+`--count` enumerates the same task list the array indexes into, across **both**
+ranking policies, so the two can never disagree. `--list` prints it numbered,
+which is what to read when one task fails and you want to know which gene it
+was.
 
 The search is the only embarrassingly parallel step — each genome is read
 independently — so the array turns *N* × 2 minutes into 2 minutes. Array tasks

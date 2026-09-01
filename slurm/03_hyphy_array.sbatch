@@ -7,7 +7,10 @@
 # alignment and writes its JSON beside it; a final `--only hyphy` pass collects
 # the results, reusing every JSON already on disk.
 #
-#   n=$(awk -F'\t' 'NR>1 && $16=="1"' results/05_genes/manifest.tsv | wc -l)
+# The task list covers every ranking policy, so one array does both. Count the
+# tasks with the helper rather than by hand:
+#
+#   n=$(bash /path/to/Morpheus/slurm/03_hyphy_array.sbatch --count)
 #   sbatch --array=1-${n}%20 /path/to/Morpheus/slurm/03_hyphy_array.sbatch
 #   sbatch --dependency=afterany:<array_jobid> /path/to/Morpheus/slurm/04_collect.sbatch
 #
@@ -23,29 +26,38 @@
 set -euo pipefail
 source "${MORPHEUS_HOME:?set MORPHEUS_HOME}/slurm/_common.sh"
 
-MANIFEST="${GENES_DIR}/manifest.tsv"
-[[ -s "${MANIFEST}" ]] || { echo "missing ${MANIFEST}; run 02_after_search first" >&2; exit 1; }
-
-idx="${SLURM_ARRAY_TASK_ID:?submit this as an array}"
-read -r ALIGNMENT TREE GENE TX < <(
-  python3 - "${MANIFEST}" "${idx}" <<'PY'
+# Enumerate (policy, gene, transcript) triples in a stable order. Emitting one
+# line per task keeps the counting mode and the running mode reading the same
+# list, so `--count` can never disagree with what the array indexes into.
+task_list() {
+    python3 - "${GENES_DIR}" "${POLICIES}" <<'PY'
 import csv, sys
 from pathlib import Path
-rows = [r for r in csv.DictReader(open(sys.argv[1]), delimiter="\t")
-        if r.get("passes_species_threshold") == "1"]
-rows.sort(key=lambda r: (r["gene"], r["human_transcript"]))
-i = int(sys.argv[2]) - 1
-if i < 0 or i >= len(rows):
-    raise SystemExit(f"array index {i+1} outside 1..{len(rows)}")
-r = rows[i]
-fasta = Path(r.get("selected_fasta") or r["fasta"])
-aln = fasta.with_name(fasta.name.replace(".cds.fa", ".codon.aln.fa"))
-tree = r.get("selected_newick") or r["newick"]
-print(aln, tree, r["gene"], r["human_transcript"])
+genes_dir, policies = Path(sys.argv[1]), sys.argv[2].split()
+for policy in policies:
+    manifest = genes_dir / policy / "manifest.tsv"
+    if not manifest.is_file():
+        continue
+    rows = [r for r in csv.DictReader(manifest.open(), delimiter="\t")
+            if r.get("passes_species_threshold") == "1"]
+    for r in sorted(rows, key=lambda r: (r["gene"], r["human_transcript"])):
+        fasta = Path(r.get("selected_fasta") or r["fasta"])
+        aln = fasta.with_name(fasta.name.replace(".cds.fa", ".codon.aln.fa"))
+        tree = r.get("selected_newick") or r["newick"]
+        print("\t".join([str(aln), tree, r["gene"], r["human_transcript"], policy]))
 PY
-)
+}
 
-echo "[$(date)] task ${idx}: ${GENE} ${TX}"
+if [[ "${1-}" == "--count" ]]; then task_list | wc -l; exit 0; fi
+if [[ "${1-}" == "--list" ]];  then task_list | cat -n;  exit 0; fi
+
+idx="${SLURM_ARRAY_TASK_ID:?submit this as an array, or pass --count}"
+LINE="$(task_list | sed -n "${idx}p")"
+[[ -n "${LINE}" ]] || { echo "array index ${idx} outside the task list" >&2; exit 1; }
+IFS=$'\t' read -r ALIGNMENT TREE GENE TX POLICY <<<"${LINE}"
+
+echo "[$(date)] task ${idx}: ${GENE} ${TX} (${POLICY})"
+[[ -s "${ALIGNMENT}" ]] || { echo "missing alignment ${ALIGNMENT}; run 02_after_search first" >&2; exit 1; }
 WORK="$(dirname "${ALIGNMENT}")/hyphy"
 mkdir -p "${WORK}"
 
@@ -61,4 +73,4 @@ for method in "${HYPHY_METHODS}".split():
     hyphy.run_one(Path(aln), prepared, Path(work), method,
                   threads=int(threads), timeout=int(timeout) if timeout else None)
 PY
-echo "[$(date)] done ${GENE} ${TX}"
+echo "[$(date)] done ${GENE} ${TX} (${POLICY})"
