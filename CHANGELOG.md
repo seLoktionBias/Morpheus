@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.1.0
+
+### Changed
+
+- **`synteny_aware` is renamed `structure_aware`.** The old name was a misnomer:
+  the ranking weighs *exon structure* and nothing positional. No scoring term
+  reads a coordinate, a flanking gene, or a distance from the home locus —
+  `structure` is the longest common subsequence of exon labels, and
+  `upstream_gene` / `downstream_gene` / `distance_to_home_locus_bp` appear in the
+  output tables as recorded columns only, never in the score.
+
+  The positional constraint on orthology is the *other* axis, the
+  `region_restricted` scope. Because of that, `synteny_aware/unrestricted` read
+  as a contradiction — "judge by gene order, but ignore where it is" — for a
+  combination that is neither of those things. `structure_aware/unrestricted`
+  says what it does.
+
+  Scope names are unchanged. Nothing about the computation changed: the same
+  candidates get the same scores and the same assignments. Only the label moved.
+
+  Output from earlier versions keeps the old directory name; the README shows the
+  three `mv` commands that bring an existing `results/` in line without re-running.
+
+
 ## 2.0.0
 
 Breaking. The pipeline now ends at the codon alignment, and the command line is

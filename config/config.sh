@@ -95,12 +95,14 @@ CDS_EXON_TABLE="${CACHE_DIR}/human_cds_exons.tsv.gz"
 : "${THREADS:=$( (sysctl -n hw.logicalcpu 2>/dev/null || nproc 2>/dev/null || echo 4) )}"
 : "${MIN_SPECIES_FRACTION:=0.5}"   # a transcript needs this share of query species
                                    # to enter gene_files_selected and be analysed
-# Ranking policies. sequence_similarity asks which query sequence most resembles
-# the transcript; synteny_aware asks which is the ortholog, judging by syntenic
-# position and exon structure, so an intronless retrocopy cannot win on identity
-# alone. Both are built; DEFAULT_POLICY drives the status plots and the summary.
-: "${POLICIES:=sequence_similarity synteny_aware}"
-: "${DEFAULT_POLICY:=synteny_aware}"
+# Ranking policies -- how a candidate is scored, not where it may come from.
+# sequence_similarity asks which query sequence most resembles the transcript,
+# dropping the exon-structure term for retrocopies; structure_aware always
+# applies it, so an intronless retrocopy cannot win on identity alone. Neither
+# reads a coordinate: the positional constraint is the search scope, not the
+# ranking. Both are built; DEFAULT_POLICY drives the status plots and summary.
+: "${POLICIES:=sequence_similarity structure_aware}"
+: "${DEFAULT_POLICY:=structure_aware}"
 : "${PLOT_MIN_SPECIES:=}"          # species a transcript column needs to be
                                    # plotted. Empty means "derive it from
                                    # MIN_SPECIES_FRACTION of the query species

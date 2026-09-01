@@ -122,15 +122,20 @@ W_PIDENT, W_PPOS, W_COV, W_STRUCT, W_LEN = 0.45, 0.10, 0.25, 0.12, 0.08
 #     Phyllostomus discolor OAS1 retrogene - the only model retaining the
 #     C-terminal CaaX motif.
 #
-# synteny_aware
-#     Which query model is the *ortholog*? Orthology is positional: it is
-#     established by syntenic location and conserved exon structure, not by
-#     identity alone. A processed pseudogene can be the closest sequence and
-#     still never be transcribed, having no promoter, enhancer or TSS. Here the
-#     structure term applies to every candidate, so an intronless copy pays the
-#     full 0.12 for having no exon structure to match, and the syntenic
-#     multi-exon model wins.
-POLICIES = ("sequence_similarity", "synteny_aware")
+# structure_aware
+#     Which query model has the *architecture* of the real gene? A processed
+#     pseudogene can be the closest sequence and still never be transcribed,
+#     having no promoter, enhancer or TSS. Here the structure term applies to
+#     every candidate, so an intronless copy pays the full 0.12 for having no
+#     exon structure to match, and the multi-exon model wins.
+#
+#     Named for what it does. It weighs *exon* structure and nothing positional:
+#     no scoring term reads a coordinate, a flanking gene or a distance from the
+#     home locus. The positional constraint on orthology is the other axis --
+#     the region_restricted scope -- and keeping the two separate is the point.
+#     (This policy was called synteny_aware before v2.1.0, which promised
+#     positional reasoning the ranking never did.)
+POLICIES = ("sequence_similarity", "structure_aware")
 
 
 def score_components(identity_global: float, ppos: float, coverage: float,
@@ -142,10 +147,10 @@ def score_components(identity_global: float, ppos: float, coverage: float,
              "positives": (W_PPOS, ppos / 100.0),
              "coverage": (W_COV, coverage),
              "length": (W_LEN, length_similarity)}
-    # Under synteny_aware the structure term always applies - that is the whole
+    # Under structure_aware the structure term always applies - that is the whole
     # point of the policy. Under sequence_similarity it is dropped for the one
     # class of candidate that cannot possibly satisfy it.
-    apply_structure = (policy == "synteny_aware") or not is_retro
+    apply_structure = (policy == "structure_aware") or not is_retro
     if apply_structure:
         terms["structure"] = (W_STRUCT, structure)
     total_w = sum(w for w, _ in terms.values())
@@ -452,7 +457,7 @@ def assign(candidates_tsv, blast_tsv, reference_dir, outdir,
                      "bitscore": round(bits, 1), "evalue": evalue,
                      "structure_lcs_coverage": round(sm["structure_lcs_coverage"], 4),
                      "structure_term_applied":
-                         int(policy == "synteny_aware" or not is_retro),
+                         int(policy == "structure_aware" or not is_retro),
                      "exon_label_jaccard": round(sm["exon_label_jaccard"], 4),
                      "length_similarity": round(len_sim, 4),
                      "similarity_score": round(score, 4)}

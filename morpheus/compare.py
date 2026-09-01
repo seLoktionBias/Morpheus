@@ -53,7 +53,7 @@ def _index(rows: List[dict]) -> Dict[Tuple[str, str, str], dict]:
 
 
 def build(region_tsv, unrestricted_tsv, outdir, sequences_fasta=None,
-          policy: str = "synteny_aware") -> Path:
+          policy: str = "structure_aware") -> Path:
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 

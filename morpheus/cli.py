@@ -212,7 +212,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--unrestricted", required=True)
     s.add_argument("--candidate-fasta", required=True)
     s.add_argument("--outdir", required=True)
-    s.add_argument("--policy", default="synteny_aware",
+    s.add_argument("--policy", default="structure_aware",
                    help="label for this comparison's output files")
     s.set_defaults(func=cmd_compare)
 
@@ -242,7 +242,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="label for the status table written by this run")
     s.add_argument("--policy", default=None,
                    help="write into this policy subdirectory "
-                        "(sequence_similarity | synteny_aware)")
+                        "(sequence_similarity | structure_aware)")
     s.add_argument("--status-only", action="store_true",
                    help="write the status table but not the sequence directories")
     s.set_defaults(func=cmd_deliverables)
@@ -266,7 +266,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("summary", help="join every stage into SUMMARY.tsv / SUMMARY.md")
     s.add_argument("--results", required=True, help="the results/ directory")
     s.add_argument("--outdir", default=None)
-    s.add_argument("--policy", default="synteny_aware",
+    s.add_argument("--policy", default="structure_aware",
                    help="which ranking the summary reports on")
     s.set_defaults(func=cmd_summary)
 

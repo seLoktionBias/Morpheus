@@ -27,7 +27,7 @@ def _median(values: Sequence[float], default=0):
     return statistics.median(values) if values else default
 
 
-def build(results_dir, outdir=None, policy: str = "synteny_aware") -> Path:
+def build(results_dir, outdir=None, policy: str = "structure_aware") -> Path:
     results = Path(results_dir)
     outdir = Path(outdir) if outdir else results
 
@@ -115,7 +115,7 @@ def build(results_dir, outdir=None, policy: str = "synteny_aware") -> Path:
 
 
 def _write_report(rows: List[dict], results: Path, path: Path,
-                  policy: str = "synteny_aware") -> None:
+                  policy: str = "structure_aware") -> None:
     def table(headers, keys, sort_key=None, reverse=False):
         data = sorted(rows, key=sort_key, reverse=reverse) if sort_key else rows
         out = ["| " + " | ".join(headers) + " |",
@@ -176,7 +176,7 @@ def _write_report(rows: List[dict], results: Path, path: Path,
         f"| Subset analysed (>= min species) | `{results.name}/05_genes/{policy}/gene_files_selected/` |",
         f"| Transcript assignments | `{results.name}/03_transcript_assignment/transcript_assignments_<scope>__<policy>.tsv` |",
         f"| Sequences, sequence-similarity ranking | `{results.name}/05_genes/sequence_similarity/` |",
-        f"| Sequences, synteny-aware ranking | `{results.name}/05_genes/synteny_aware/` |",
+        f"| Sequences, structure-aware ranking | `{results.name}/05_genes/structure_aware/` |",
         f"| Region-restricted vs unrestricted | `{results.name}/03_transcript_assignment/scope_comparison.tsv` |",
         f"| Every pairwise similarity considered | `{results.name}/03_transcript_assignment/pairwise_similarity_<scope>.tsv` |",
         f"| Copy number per species | `{results.name}/04_copy_number/copy_number_matrix.tsv` |",

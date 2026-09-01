@@ -193,7 +193,7 @@ them into the two combinations that answer a real question:
 
 | `--search` | Scope | Ranking | The question it answers |
 |---|---|---|---|
-| `region` | the gene's own syntenic locus | synteny + exon structure | *what does this locus produce?* — the conservative orthology answer |
+| `region` | the gene's own syntenic locus | exon structure counted | *what does this locus produce?* — the conservative orthology answer |
 | `similarity` | the gene anywhere, paralogs still excluded | sequence identity | *what is the closest match this animal has?* — finds a functional copy elsewhere when the locus has diverged |
 | `both` | both scopes | both rankings | all four combinations, side by side (default) |
 
@@ -342,26 +342,62 @@ whether the two scopes chose the same model:
 
 ## Two ranking policies
 
-Within a scope, there are two defensible ways to rank a candidate. Morpheus
-builds **both**, side by side, and keeps them separate through every downstream
-step.
+The scope decides **where** a candidate may come from. The ranking decides **how**
+it is scored once found. They are independent, and Morpheus builds both rankings
+side by side, keeping them separate through every downstream step.
+
+Every candidate is scored on the same five terms:
+
+```
+identity 0.45 · coverage 0.25 · structure 0.12 · positives 0.10 · length 0.08
+```
+
+The two policies differ in exactly one rule:
 
 | Policy | Question | Treatment of retrocopies |
 |---|---|---|
 | `sequence_similarity` | which query sequence most resembles this transcript? | the exon-structure term is **dropped**; remaining weights renormalise |
-| `synteny_aware` | which query model is the *ortholog*? | the structure term **applies**, so an intronless copy pays for having no structure to match |
+| `structure_aware` | which query model has the architecture of the real gene? | the structure term **applies**, so an intronless copy pays for having no structure to match |
 
 A retrocopy is a reverse-transcribed mRNA with no introns, so its exon-structure
 term is necessarily zero. Scoring it there penalises a processed copy for being
 processed, which is circular if the question is sequence resemblance — but it is
-exactly the right penalty if the question is orthology, because orthology is
-positional and a processed pseudogene may never be transcribed.
+the right penalty if the question is which model is the functional gene, because
+a processed pseudogene may never be transcribed at all.
 
-They differ on **7.4%** of assignments in the reference dataset, concentrated
-precisely where you would expect: OAS1, IFITM3, IFITM1, IFITM2.
+> **The ranking is not positional.** No scoring term reads a coordinate, a
+> flanking gene, or a distance from the home locus — `structure` is the longest
+> common subsequence of *exon labels*, nothing more. The positional constraint on
+> orthology lives on the other axis, in the `region_restricted` scope. Keeping
+> the two apart is the whole point of having a 2×2 rather than one setting.
+>
+> This policy was called `synteny_aware` before v2.1.0. The name promised
+> positional reasoning the ranking never did, and `structure_aware` reads
+> correctly next to `unrestricted` where the old name read as a contradiction.
 
-`DEFAULT_POLICY` (default `synteny_aware`) drives the summary; both trees are
+Measured on the 26-gene, 103-species reference run, the two rankings differ on
+**6.6%** of assignments — and in most of those the *same* query models are
+recovered and merely re-paired to different human isoforms, because the matching
+is one-to-one. Genuinely different models are chosen in 42 of 116 disagreeing
+gene × species groups. The differences concentrate in OAS1, IFITM3, IFITM1 and
+IFITM2.
+
+`DEFAULT_POLICY` (default `structure_aware`) drives the summary; both trees are
 always built.
+
+### Renaming existing output
+
+Results produced before v2.1.0 use the old directory name. To bring them in line
+without re-running anything:
+
+```bash
+cd <output>/results
+mv 05_genes/synteny_aware 05_genes/structure_aware
+mv 06_plots/synteny_aware 06_plots/structure_aware
+for f in 03_transcript_assignment/*synteny_aware* SUMMARY__synteny_aware.*; do
+    [ -e "$f" ] && mv "$f" "${f//synteny_aware/structure_aware}"
+done
+```
 
 ---
 
@@ -522,7 +558,7 @@ The alignment and its pruned tree are named alike and hold exactly the same taxa
 so a codon-model tool can be pointed at the pair directly:
 
 ```bash
-cd results/05_genes/synteny_aware/gene_files_selected/OAS1/OAS1__ENST00000202917
+cd results/05_genes/structure_aware/gene_files_selected/OAS1/OAS1__ENST00000202917
 hyphy absrel --alignment OAS1__ENST00000202917.codon.aln.fa \
              --tree      OAS1__ENST00000202917.tree.nwk
 ```
@@ -849,7 +885,7 @@ Override by exporting before running, or edit `config/config.sh`.
 | `MIN_ASSIGNMENT_SCORE` | 0.30 | below this a human transcript stays unassigned |
 | `MIN_ASSIGNMENT_PIDENT` | 40 | protein identity floor for any assignment |
 | `POLICIES` | both | ranking policies to build (normally set by `--search`) |
-| `DEFAULT_POLICY` | `synteny_aware` | which ranking the summary reports on |
+| `DEFAULT_POLICY` | `structure_aware` | which ranking the summary reports on |
 | `FAMILY_MIN_FRACTION` | 0.25 | paralog family membership threshold |
 | `COPY_CLUSTER_SLOP` | 10000 | bp gap tolerated when rejoining one gene's fragments |
 | `MORPHEUS_ENV` | `Morpheus` | conda environment name |

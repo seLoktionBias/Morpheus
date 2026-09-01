@@ -59,8 +59,9 @@ How much to run:
   --mode local|slurm     run here, or submit the whole chain to Slurm
                            (default local)
   --search region|similarity|both
-                         region      - the gene's own syntenic locus, ranked by
-                                       synteny and exon structure
+                         region      - the gene's own syntenic locus (that is
+                                       the syntenic constraint), ranked with
+                                       exon structure counted
                          similarity  - the gene anywhere, ranked by sequence
                                        identity
                          both        - both, side by side (default)
@@ -331,16 +332,16 @@ fi
 # ---------------------------------------------------------------------------
 case "${SEARCH}" in
     region)
-        SCOPES="region_restricted";  POLICIES="synteny_aware"
+        SCOPES="region_restricted";  POLICIES="structure_aware"
         SEQUENCE_SCOPE="region_restricted"; STATUS_SCOPES="region_restricted"
-        DEFAULT_POLICY="synteny_aware" ;;
+        DEFAULT_POLICY="structure_aware" ;;
     similarity)
         SCOPES="unrestricted";       POLICIES="sequence_similarity"
         SEQUENCE_SCOPE="unrestricted";      STATUS_SCOPES="unrestricted"
         DEFAULT_POLICY="sequence_similarity" ;;
     both)
         SCOPES="region_restricted unrestricted"
-        POLICIES="sequence_similarity synteny_aware"
+        POLICIES="sequence_similarity structure_aware"
         SEQUENCE_SCOPE="unrestricted"
         STATUS_SCOPES="region_restricted unrestricted" ;;
 esac
