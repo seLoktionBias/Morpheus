@@ -11,6 +11,7 @@
 #   morpheus step bat-search --help            # the Python CLI, for one step
 #   morpheus plot exon-models --gene MX1
 #   morpheus env                               # show what was resolved
+#   morpheus migrate-names --results results/  # older output -> current names
 #
 # The package works from a git checkout with no installation: this script finds
 # its own directory, so `bin/morpheus` and `/path/to/Morpheus/bin/morpheus`
@@ -36,6 +37,7 @@ USAGE
 COMMANDS
   run [options]        run the pipeline, or any part of it
   env                  show what was resolved, and what is missing
+  migrate-names        rename an older results tree to the current names
   step NAME [options]  run one step through the Python CLI
   plot NAME [options]  redraw one figure
                          exon-models | transcript-status | scope-comparison
@@ -220,6 +222,11 @@ case "${sub}" in
             *) echo "unknown figure '${name}'" >&2; exit 2 ;;
         esac
         exec Rscript "${MORPHEUS_HOME}/R/${script}" "$@"
+        ;;
+    migrate-names|migrate)
+        activate_environment || true
+        export PYTHONPATH="${MORPHEUS_HOME}${PYTHONPATH:+:${PYTHONPATH}}"
+        exec "$(python_bin)" -m morpheus migrate-names "$@"
         ;;
     env)      cmd_env ;;
     version)  cat "${MORPHEUS_HOME}/VERSION" ;;

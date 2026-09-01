@@ -2,6 +2,16 @@
 
 ## 2.1.0
 
+### Added
+
+- **`morpheus migrate-names`** brings a results tree from an earlier version in
+  line with the current policy names. Renaming by hand is three `mv` commands
+  plus a `sed`, and the `sed` is the part people forget: `manifest.tsv` records
+  an absolute path to every FASTA and tree written, so a rename that misses the
+  file contents leaves a manifest pointing at directories that no longer exist.
+  Dry run by default; renames deepest-first; rewrites text files only; refuses a
+  collision rather than forcing it; idempotent.
+
 ### Changed
 
 - `tests/check_env_modes.sh` now accepts any of several correct failure messages

@@ -83,7 +83,8 @@ PY
 echo "-- CLI --"
 check python3 -m morpheus --help
 for step in cds-table human-reference families bat-search merge-search screen \
-            assign compare copy-number deliverables align merge-genes summary; do
+            assign compare copy-number deliverables align merge-genes \
+            migrate-names summary; do
     check python3 -m morpheus "${step}" --help
 done
 check bash "${HERE}/bin/morpheus" version
@@ -165,6 +166,49 @@ check bash -c '
 
 echo "-- help matches the program --"
 check python3 "${HERE}/tests/check_help.py" "${HERE}"
+
+echo "-- results migration --"
+check python3 - <<'PY'
+# Renaming an older results tree must move names AND the paths recorded inside
+# tables, leave binary files alone, refuse a collision, and be idempotent.
+import tempfile
+from pathlib import Path
+from morpheus.migrate import migrate
+
+d = Path(tempfile.mkdtemp()) / "results"
+(d / "05_genes/synteny_aware/all_gene_files/MX1").mkdir(parents=True)
+(d / "06_plots/synteny_aware").mkdir(parents=True)
+(d / "03_transcript_assignment").mkdir(parents=True)
+(d / "05_genes/synteny_aware/manifest.tsv").write_text(
+    "gene\tfasta\nMX1\t/x/05_genes/synteny_aware/a.fa\n")
+(d / "03_transcript_assignment/scope_comparison__synteny_aware.tsv").write_text("x\n")
+(d / "SUMMARY__synteny_aware.md").write_text("ranked under synteny_aware\n")
+(d / "06_plots/synteny_aware/f.pdf").write_bytes(b"bin\x00synteny_aware")
+
+t = migrate(d, apply=False)
+assert t["directories"] == 2 and t["files"] == 2, t
+assert (d / "05_genes/synteny_aware").is_dir(), "dry run must change nothing"
+
+t = migrate(d, apply=True)
+assert (d / "05_genes/structure_aware/manifest.tsv").is_file()
+assert (d / "SUMMARY__structure_aware.md").is_file()
+assert not (d / "05_genes/synteny_aware").exists()
+man = (d / "05_genes/structure_aware/manifest.tsv").read_text()
+assert "structure_aware" in man and "synteny_aware" not in man, "paths inside not rewritten"
+assert (d / "06_plots/structure_aware/f.pdf").read_bytes() == b"bin\x00synteny_aware", \
+    "binary file must not be rewritten"
+assert (d / "05_genes/structure_aware/all_gene_files/MX1").is_dir(), "children lost"
+
+t = migrate(d, apply=True)          # idempotent
+assert t == {"directories": 0, "files": 0, "contents": 0, "skipped": 0}, t
+
+# a collision is skipped, never forced
+c = Path(tempfile.mkdtemp())
+(c / "synteny_aware").mkdir(); (c / "structure_aware").mkdir()
+t = migrate(c, apply=True)
+assert t["skipped"] == 1 and t["directories"] == 0, t
+assert (c / "synteny_aware").is_dir(), "collision must leave the original alone"
+PY
 
 echo "-- shell portability --"
 check python3 "${HERE}/tests/check_portability.py" "${HERE}"

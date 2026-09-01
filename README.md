@@ -385,19 +385,23 @@ IFITM2.
 `DEFAULT_POLICY` (default `structure_aware`) drives the summary; both trees are
 always built.
 
-### Renaming existing output
+### Migrating output from an earlier version
 
-Results produced before v2.1.0 use the old directory name. To bring them in line
-without re-running anything:
+Results produced before v2.1.0 carry the old directory name, the old file names,
+and - easy to miss - the old name inside `manifest.tsv`, which records an
+absolute path to every FASTA and tree it wrote. Renaming the directories alone
+leaves that manifest pointing at paths that no longer exist.
 
 ```bash
-cd <output>/results
-mv 05_genes/synteny_aware 05_genes/structure_aware
-mv 06_plots/synteny_aware 06_plots/structure_aware
-for f in 03_transcript_assignment/*synteny_aware* SUMMARY__synteny_aware.*; do
-    [ -e "$f" ] && mv "$f" "${f//synteny_aware/structure_aware}"
-done
+morpheus migrate-names --results /path/to/results          # dry run
+morpheus migrate-names --results /path/to/results --apply
 ```
+
+It renames directories deepest-first, renames files, then rewrites the old name
+inside text files only - binary files are left untouched. A rename that would
+overwrite something is skipped and reported, never forced, and running it twice
+is a no-op. Run it wherever the results live: migrating a local copy does not
+migrate the one on the cluster.
 
 ---
 
